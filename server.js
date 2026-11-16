@@ -12,8 +12,12 @@ try { const s = require('node:sea'); if (s.isSea()) sea = s; } catch { /* 일반
 
 const HOST = '127.0.0.1'; // 키 설정 API가 있으므로 이 PC에서만 접속 가능하게 한다
 const PUBLIC = path.join(__dirname, 'public');
-const FILES = ['index.html', 'style.css', 'app.js', 'chart.js'];
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+const FILES = ['index.html', 'style.css', 'app.js', 'chart.js', 'icon.svg'];
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const APP_ID = 'krx-apex';
+
+// 콘솔 창 없이 실행될 때는 출력할 곳이 없다 → 출력 오류로 죽지 않게 한다.
+for (const out of [process.stdout, process.stderr]) out.on('error', () => {});
 
 function readPublic(name) {
   if (!FILES.includes(name)) return null;
@@ -41,7 +45,7 @@ const ROUTES = {
     let source = null;
     const sources = [];
     if (keys.has.toss()) sources.push(async () => { const t = await keys.tossTicks(c); source = '토스증권'; return t; });
-    if (keys.has.kis()) sources.push(async () => { const t = await keys.kisTicks(c); source = 'KIS'; return t; });
+    if (keys.has.kis() && !data.isUS(c)) sources.push(async () => { const t = await keys.kisTicks(c); source = 'KIS'; return t; });
     if (!sources.length) return { enabled: false, ticks: [] };
     return { enabled: true, ticks: (await firstOf(sources)) || [], source };
   } },
@@ -68,12 +72,12 @@ async function firstOf(sources, swallowLast = false) {
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 function code(q) {
   const c = q.get('code') || '';
-  if (!/^[A-Za-z0-9]{1,12}$/.test(c)) throw bad('bad code');
+  if (!/^[A-Za-z0-9.]{1,12}$/.test(c)) throw bad('bad code'); // 미국 종목은 로이터 코드(AAPL.O, .IXIC)
   return c;
 }
 function codes(q) {
   const list = (q.get('codes') || '').split(',').filter(Boolean);
-  if (list.length > 50 || list.some((c) => !/^[A-Za-z0-9]{1,12}$/.test(c))) throw bad('bad codes');
+  if (list.length > 50 || list.some((c) => !/^[A-Za-z0-9.]{1,12}$/.test(c))) throw bad('bad codes');
   return list;
 }
 function macroCode(q) {
@@ -93,8 +97,8 @@ function cached(key, ttl, run) {
   return promise;
 }
 
-function send(res, status, body, type = 'application/json') {
-  res.writeHead(status, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+function send(res, status, body, type = 'application/json', extra = {}) {
+  res.writeHead(status, { ...extra, 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(body);
 }
 
@@ -116,6 +120,63 @@ function sameOrigin(req) {
   try { return local.test(new URL(origin).host); } catch { return false; }
 }
 
+// ── 비밀번호 잠금: 비밀번호가 설정돼 있으면 로그인한 창(세션 쿠키)만 API를 쓸 수 있다.
+const sessions = new Set();
+const COOKIE = 'kt_session';
+let fails = 0, blockedUntil = 0;
+const cookieOf = (req) => { const m = /(?:^|;\s*)kt_session=([a-f0-9]{48})/.exec(req.headers.cookie || ''); return m ? m[1] : null; };
+const authed = (req) => !keys.hasPassword() || sessions.has(cookieOf(req));
+function newSession() {
+  const t = require('crypto').randomBytes(24).toString('hex');
+  sessions.add(t);
+  return { 'Set-Cookie': `${COOKIE}=${t}; Path=/; HttpOnly; SameSite=Strict` };
+}
+
+async function handleAuth(req, res, action) {
+  if (!sameOrigin(req)) return send(res, 403, '{"error":"forbidden"}');
+  if (!action && req.method === 'GET') return send(res, 200, JSON.stringify({ app: APP_ID, hasPassword: keys.hasPassword(), locked: !authed(req) }));
+  if (req.method !== 'POST' || !/^application\/json/.test(req.headers['content-type'] || '')) return send(res, 405, '{"error":"method"}');
+  const body = await readBody(req);
+
+  if (action === 'login') {
+    if (Date.now() < blockedUntil) return send(res, 429, JSON.stringify({ error: `여러 번 틀렸습니다. ${Math.ceil((blockedUntil - Date.now()) / 1000)}초 뒤에 다시 시도하세요.` }));
+    if (!keys.checkPassword(body.password)) {
+      if (++fails >= 5) { fails = 0; blockedUntil = Date.now() + 60e3; }
+      return send(res, 401, JSON.stringify({ error: '비밀번호가 올바르지 않습니다.' }));
+    }
+    fails = 0;
+    return send(res, 200, '{"ok":true}', 'application/json', newSession());
+  }
+  if (!authed(req)) return send(res, 401, '{"error":"locked"}');
+  if (action === 'lock') { sessions.delete(cookieOf(req)); return send(res, 200, '{"ok":true}'); }
+  if (action === 'password') {
+    if (keys.hasPassword() && !keys.checkPassword(body.current)) return send(res, 400, JSON.stringify({ error: '현재 비밀번호가 올바르지 않습니다' }));
+    const next = typeof body.next === 'string' ? body.next : '';
+    if (next && (next.length < 4 || next.length > 200)) return send(res, 400, JSON.stringify({ error: '비밀번호는 4자 이상이어야 합니다' }));
+    keys.setPassword(next);
+    sessions.clear(); // 다른 창은 다시 로그인해야 한다
+    return send(res, 200, JSON.stringify({ hasPassword: keys.hasPassword() }), 'application/json', next ? newSession() : {});
+  }
+  return send(res, 404, '{"error":"not found"}');
+}
+
+// ── 창 연결 추적: exe로 실행 중일 때 열린 창이 모두 닫히면 프로그램을 끝낸다(콘솔 창이 없으므로).
+const EXIT_WHEN_CLOSED = !!sea || process.argv.includes('--exit-on-close');
+let windows = 0, exitTimer = null;
+function handleAlive(req, res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+  res.write(': ok\n\n');
+  windows++;
+  clearTimeout(exitTimer);
+  const beat = setInterval(() => res.write(': ping\n\n'), 20000);
+  req.on('close', () => {
+    clearInterval(beat);
+    windows--;
+    // 새로고침처럼 곧바로 다시 연결되는 경우를 위해 잠시 기다린다.
+    if (EXIT_WHEN_CLOSED && windows <= 0) exitTimer = setTimeout(() => { if (windows <= 0) process.exit(0); }, 8000);
+  });
+}
+
 async function handleSettings(req, res) {
   if (!sameOrigin(req)) return send(res, 403, '{"error":"forbidden"}');
   if (req.method === 'GET') return send(res, 200, JSON.stringify(keys.publicSettings()));
@@ -130,6 +191,9 @@ async function handleSettings(req, res) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
+    if (url.pathname === '/api/alive') return handleAlive(req, res);
+    if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) return await handleAuth(req, res, url.pathname.slice(10));
+    if (url.pathname.startsWith('/api/') && !authed(req)) return send(res, 401, '{"error":"locked"}');
     if (url.pathname === '/api/settings') return await handleSettings(req, res);
     if (url.pathname.startsWith('/api/')) {
       const route = ROUTES[url.pathname.slice(5)];
@@ -174,8 +238,24 @@ function listen(port, triesLeft) {
   server.listen(port, HOST, () => {
     const url = `http://localhost:${server.address().port}`;
     console.log(`KRX::APEX 터미널 실행 중  ${url}`);
-    console.log('이 창을 닫으면 프로그램이 종료됩니다.');
     if ((sea || process.argv.includes('--open')) && !process.argv.includes('--no-open')) openWindow(url);
   });
 }
-listen(Number(process.env.PORT) || 3000, 20);
+
+// 이미 실행 중이면 새로 띄우지 않고 그 프로그램의 창만 다시 연다.
+async function findRunning(port) {
+  for (let p = port; p < port + 4; p++) {
+    try {
+      const r = await fetch(`http://${HOST}:${p}/api/auth`, { signal: AbortSignal.timeout(700) });
+      if ((await r.json()).app === APP_ID) return `http://localhost:${p}`;
+    } catch { /* 이 포트에는 없음 */ }
+  }
+  return null;
+}
+
+(async () => {
+  const port = Number(process.env.PORT) || 3000;
+  const running = sea && !process.argv.includes('--no-open') ? await findRunning(port) : null;
+  if (running) { await openWindow(running); process.exit(0); }
+  listen(port, 20);
+})();

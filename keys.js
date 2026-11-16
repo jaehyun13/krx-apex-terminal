@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { isUS, ticker } = require('./data');
 
 // ── 설정 저장소: 키는 프로그램의 설정 화면에서 입력하고, 사용자 폴더의 settings.json 에 저장한다.
 //    (Windows: %APPDATA%\KRX-APEX, 그 외: ~/.config/krx-apex). 환경변수가 있으면 그 값을 기본값으로 쓴다.
@@ -44,9 +45,30 @@ function saveSettings(patch) {
     if (v.length > 400 || /[\r\n]/.test(v)) throw new Error('키 형식이 올바르지 않습니다');
     if (v) settings[k] = v; else settings[k] = '';
   }
+  persist();
+  token = null; corpMap = null; tossTok = null; tossAccount = null;
+}
+
+function persist() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), { mode: 0o600 });
-  token = null; corpMap = null; tossTok = null; tossAccount = null;
+}
+
+// ── 프로그램 비밀번호: 원문은 저장하지 않고 scrypt 해시만 둔다.
+const crypto = require('crypto');
+const hasPassword = () => !!(settings.PW_HASH && settings.PW_SALT);
+function checkPassword(pw) {
+  if (!hasPassword()) return true;
+  const got = crypto.scryptSync(String(pw ?? ''), settings.PW_SALT, 32);
+  return crypto.timingSafeEqual(got, Buffer.from(settings.PW_HASH, 'hex'));
+}
+function setPassword(pw) {
+  if (!pw) { delete settings.PW_HASH; delete settings.PW_SALT; }
+  else {
+    settings.PW_SALT = crypto.randomBytes(16).toString('hex');
+    settings.PW_HASH = crypto.scryptSync(String(pw), settings.PW_SALT, 32).toString('hex');
+  }
+  persist();
 }
 
 // 저장된 키로 실제 호출을 한 번 해 보고 결과를 알려준다.
@@ -174,7 +196,7 @@ const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
 
 // 10단계 호가 (data.orderbook 과 같은 형태)
 async function kisOrderbook(code) {
-  if (!has.kis()) return null;
+  if (!has.kis() || isUS(code)) return null; // 국내 종목만
   const d = await kisGet('/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn', 'FHKST01010200', code);
   const o = d.output1 || {};
   const sell = [], buy = [];
@@ -193,7 +215,7 @@ async function kisOrderbook(code) {
 
 // 최근 체결 틱 + 체결강도
 async function kisTicks(code) {
-  if (!has.kis()) return null;
+  if (!has.kis() || isUS(code)) return null;
   const d = await kisGet('/uapi/domestic-stock/v1/quotations/inquire-ccnl', 'FHKST01010300', code);
   return (d.output || []).slice(0, 20).map((x) => ({
     time: String(x.stck_cntg_hour || '').replace(/(\d\d)(\d\d)(\d\d)/, '$1:$2:$3'),
@@ -255,7 +277,7 @@ async function tossAccountSeq() {
 // 호가 (data.orderbook 과 같은 형태). 전일 종가는 응답에 없어 화면에서 시세로 보완한다.
 async function tossOrderbook(code) {
   if (!has.toss()) return null;
-  const r = await tossGet('/api/v1/orderbook', { symbol: code });
+  const r = await tossGet('/api/v1/orderbook', { symbol: isUS(code) ? ticker(code) : code }); // 미국은 티커로 조회
   const lv = (x) => ({ price: n(x.price), count: n(x.volume) });
   const sell = (r.asks || []).map(lv).sort((a, b) => b.price - a.price);
   const buy = (r.bids || []).map(lv).sort((a, b) => b.price - a.price);
@@ -268,7 +290,7 @@ async function tossOrderbook(code) {
 // 최근 체결. 직전 체결가 대비 방향을 chg 부호로 준다(체결강도는 제공되지 않음).
 async function tossTicks(code) {
   if (!has.toss()) return null;
-  const r = await tossGet('/api/v1/trades', { symbol: code, count: '21' });
+  const r = await tossGet('/api/v1/trades', { symbol: isUS(code) ? ticker(code) : code, count: '21' });
   const list = (r || []).map((x) => ({ time: String(x.timestamp || '').slice(11, 19), price: n(x.price), volume: n(x.volume) }));
   return list.slice(0, 20).map((x, i) => ({ ...x, chg: list[i + 1] ? x.price - list[i + 1].price : 0, pct: null, strength: null }));
 }
@@ -306,4 +328,4 @@ async function tossHoldings() {
   };
 }
 
-module.exports = { has, dartList, kisOrderbook, kisTicks, tossOrderbook, tossTicks, tossHoldings, publicSettings, saveSettings, testKeys };
+module.exports = { hasPassword, checkPassword, setPassword, has, dartList, kisOrderbook, kisTicks, tossOrderbook, tossTicks, tossHoldings, publicSettings, saveSettings, testKeys };

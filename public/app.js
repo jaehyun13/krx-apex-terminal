@@ -22,6 +22,7 @@ function save(k, v) { try { localStorage.setItem('kt.' + k, v); } catch { /* 저
 async function api(path, body) {
   const res = await fetch('api/' + path, body === undefined ? undefined
     : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) { showLock(); throw new Error('잠금 상태'); }
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
   return res.json();
 }
@@ -41,6 +42,11 @@ const dateLabel = (n) => { const s = String(n); return `${s.slice(0, 4)}.${s.sli
 const kstTime = (t) => new Date(t).toLocaleTimeString('en-GB', { timeZone: 'Asia/Seoul', hour12: false });
 const chgHtml = (r, dp = 2) => `<span>${arrow(r.chg)} ${signed(r.chg, dp)}</span><span>(${pct(r.pct)})</span>`;
 const kv = (label, html, c = '') => `<div><span>${esc(label)}</span><span class="${c}">${html}</span></div>`;
+
+const isUS = (code) => String(code).includes('.'); // 미국 종목·지수는 로이터 코드(AAPL.O, .IXIC)
+const US_MARKETS = ['NASDAQ', 'NYSE'];
+const US_ALIAS = { NASDAQ: '.IXIC', 나스닥: '.IXIC', DOW: '.DJI', 다우: '.DJI', SPX: '.INX', 'S&P500': '.INX', SP500: '.INX', SOX: '.SOX', VIX: '.VIX' };
+const money = (v, cur) => (v == null ? '−' : cur === 'USD' ? '$' + fmt(v, 2) : fmt(Math.round(v)));
 
 function showMsg(text) { $('msg').textContent = text || ''; $('msg').hidden = !text; }
 
@@ -155,12 +161,13 @@ function renderSectors(list) {
 
 // ── 순위 표
 function renderRank(list) {
-  const badge = state.rankMarket === 'KOSPI' ? 'KS' : 'KQ';
+  const badge = { KOSPI: 'KS', KOSDAQ: 'KQ', NASDAQ: 'NQ', NYSE: 'NY' }[state.rankMarket];
+  const us = US_MARKETS.includes(state.rankMarket), dp = us ? 2 : 0;
   $('rank').tBodies[0].innerHTML = list.map((r) => {
     const c = cls(r.chg);
     return `<tr data-code="${esc(r.code)}" class="${r.code === state.code ? 'sel' : ''}">` +
-      `<td>${esc(r.code)}</td><td class="nm">${esc(r.name)}<span class="badge">${badge}</span></td>` +
-      `<td class="${c} b">${fmt(r.price)}</td><td class="${c}">${arrow(r.chg)} ${signed(r.chg)}</td><td class="${c} b">${pct(r.pct)}</td>` +
+      `<td>${esc(r.symbol || r.code)}</td><td class="nm">${esc(r.name)}<span class="badge">${badge}</span></td>` +
+      `<td class="${c} b">${us ? '$' : ''}${fmt(r.price, dp)}</td><td class="${c}">${arrow(r.chg)} ${signed(r.chg, dp)}</td><td class="${c} b">${pct(r.pct)}</td>` +
       `<td>${fmt(r.volume)}</td><td class="accent b">${esc((r.value || '−').replace(/원$/, ''))}</td><td>${esc((r.mcap || '−').replace(/원$/, ''))}</td></tr>`;
   }).join('');
 }
@@ -171,19 +178,20 @@ async function loadRank() {
 
 // ── 선택 종목 (마켓 화면 하단 바 + 우측 수급, 종목 화면 전체)
 function renderQuote(q) {
-  const dp = q.isIndex ? 2 : 0;
+  const us = isUS(q.code), dp = q.isIndex || us ? 2 : 0, cur = us && !q.isIndex ? '$' : '';
   const c = cls(q.chg);
   const open = q.status === 'OPEN';
 
-  $('sel').innerHTML = `<span class="accent b">선택 종목:</span><span class="nm">${esc(q.code)} ${esc(q.name)}</span>` +
+  $('sel').innerHTML = `<span class="accent b">선택 종목:</span><span class="nm">${esc(q.symbol || q.code)} ${esc(q.name)}</span>` +
     `<span class="${c} b">${fmt(q.price, dp)} ${arrow(q.chg)} (${pct(q.pct)})</span>`;
 
   $('quote').innerHTML =
     `<div class="q-h"><span class="q-n">${esc(q.name)}</span><span class="badge ${open ? 'accent' : ''}">${open ? '장중' : '장마감'}</span></div>` +
-    `<div class="q-meta">${esc(q.code)}${q.market && !q.isIndex ? ' · ' + esc(q.market) : ''}</div>` +
-    `<div class="q-px ${c}">${fmt(q.price, dp)}</div>` +
+    `<div class="q-meta">${esc(q.symbol || q.code)}${q.market && !q.isIndex ? ' · ' + esc(q.market) : ''}${us ? ' · USD' : ''}</div>` +
+    `<div class="q-px ${c}">${cur}${fmt(q.price, dp)}</div>` +
     `<div class="q-chg ${c}">${chgHtml(q, dp)}</div>` +
-    `<div class="q-meta">${q.tradedAt ? esc(q.tradedAt.slice(0, 19).replace('T', ' ')) + ' KST' : ''}</div>`;
+    (q.extended ? `<div class="q-meta">${esc(q.extended.session)} <span class="${cls(q.extended.chg)} b">${cur}${fmt(q.extended.price, dp)} ${arrow(q.extended.chg)} ${signed(q.extended.chg, dp)} (${pct(q.extended.pct)})</span></div>` : '') +
+    `<div class="q-meta">${q.tradedAt ? esc(q.tradedAt.slice(0, 19).replace('T', ' ')) + (us ? ' 현지시각' : ' KST') : ''}</div>`;
 
   $('infos').innerHTML = q.infos.map((i) =>
     `<div><dt>${esc(i.key)}</dt><dd title="${esc(i.value)}${i.desc ? ' (' + esc(i.desc) + ')' : ''}">${esc(i.value)}</dd></div>`).join('');
@@ -192,7 +200,7 @@ function renderQuote(q) {
     ? q.flows.map((f) => `<tr><td>${dateLabel(f.date).slice(5)}</td><td>${fmt(f.close)}</td>` +
         ['foreign', 'inst', 'indiv'].map((k) => `<td class="${cls(f[k])} b">${signed(f[k])}</td>`).join('') +
         `<td>${esc(f.holdRatio || '−')}</td></tr>`).join('')
-    : '<tr><td colspan="6" style="text-align:left">지수는 종목별 수급을 제공하지 않습니다</td></tr>';
+    : `<tr><td colspan="6" style="text-align:left">${us ? '미국 주식은 투자자별 수급을 제공하지 않습니다' : '지수는 종목별 수급을 제공하지 않습니다'}</td></tr>`;
 
   // 마켓 화면 우측: 일별 수급 요약 + 외국인·기관 합산 매수/매도 비중
   $('mini-title').textContent = `${q.name} 일별 수급`;
@@ -207,7 +215,7 @@ function renderQuote(q) {
       `<div class="mini-foot"><div><span class="up">외인·기관 매수 ${(buy / tot * 100).toFixed(1)}%</span><span class="dn">매도 ${(sell / tot * 100).toFixed(1)}%</span></div>` +
       `<div class="pressure"><span class="r" style="width:${buy / tot * 100}%"></span><span class="f" style="width:${sell / tot * 100}%"></span></div></div>`;
   } else {
-    $('mini-flows').innerHTML = '<div class="empty">지수는 종목별 수급을 제공하지 않습니다. 종목을 선택하세요.</div>';
+    $('mini-flows').innerHTML = `<div class="empty">${us ? '미국 주식은 투자자별 수급을 제공하지 않습니다.' : '지수는 종목별 수급을 제공하지 않습니다. 종목을 선택하세요.'}</div>`;
   }
   document.title = `${q.name} ${fmt(q.price, dp)} · KRX::APEX`;
 }
@@ -266,7 +274,7 @@ function renderChart() {
       tickKey: t.slice(0, 2), tickLabel: `${t.slice(0, 2)}시`,
     })) : [];
     chart.current = bars;
-    chart.set({ mode: 'line', bars, prevClose: d ? d.prevClose : null });
+    chart.set({ mode: 'line', bars, prevClose: d ? d.prevClose : null, dp: isUS(state.code) ? 2 : undefined });
     $('legend').innerHTML = d ? '<span>점선: 전일 종가</span>' : '';
   } else {
     const d = state.daily && state.daily.code === state.code ? state.daily : null;
@@ -281,7 +289,7 @@ function renderChart() {
         tickLabel: `${s.slice(2, 4)}.${s.slice(4, 6)}` };
     });
     chart.current = bars;
-    chart.set({ mode: 'candle', bars });
+    chart.set({ mode: 'candle', bars, dp: isUS(state.code) ? 2 : undefined });
     $('legend').innerHTML = d ? [['ma5', '5일선'], ['ma20', '20일선'], ['ma60', '60일선']]
       .map(([k, t]) => `<span><i style="background:var(--${k})"></i>${t}</span>`).join('') + (weekly ? '<span>주봉</span>' : '') : '';
   }
@@ -318,7 +326,7 @@ async function loadQuote() {
 
 // open=true면 종목 화면으로 이동한다.
 async function selectCode(code, open = false) {
-  code = String(code).toUpperCase();
+  code = isUS(code) ? String(code) : String(code).toUpperCase(); // 로이터 코드는 대소문자를 구분한다(BRKb.N)
   const prev = state.code;
   state.code = code;
   showMsg('');
@@ -343,7 +351,7 @@ async function selectCode(code, open = false) {
 // ── 주기 갱신
 async function refresh() {
   const results = await Promise.allSettled([
-    api('overview').then((o) => { renderHeader(o); renderCards(o); renderTape(o); renderProgram(o); }),
+    api('overview').then((o) => { const u = o.fx.find((f) => f.code === 'FX_USDKRW'); if (u) state.usdkrw = u.price; renderHeader(o); renderCards(o); renderTape(o); renderProgram(o); }),
     loadQuote(),
     loadView(currentView(), true),
   ]);
@@ -370,7 +378,9 @@ const keysLink = '<button type="button" class="link" data-open-keys>API 키 설�
 
 function renderBook(b) {
   if (!b || (!b.sell.length && !b.buy.length)) {
-    $('book').innerHTML = '<div class="empty">호가 정보가 없습니다 (지수이거나 장 시작 전)</div>';
+    $('book').innerHTML = isUS(state.code) && !state.code.startsWith('.')
+      ? `<div class="empty">미국 주식 호가는 토스증권 키를 입력하면 표시됩니다. ${keysLink}</div>`
+      : '<div class="empty">호가 정보가 없습니다 (지수이거나 장 시작 전)</div>';
     return;
   }
   const levels = Math.max(b.sell.length, b.buy.length);
@@ -417,6 +427,7 @@ function renderFin(f) {
     t.tHead.innerHTML = ''; t.tBodies[0].innerHTML = '<tr><td style="text-align:left">재무 정보가 없습니다</td></tr>';
     return;
   }
+  $('fin-unit').textContent = f.unit ? `${f.unit} · (E) 추정` : '매출·이익 억원 · (E) 추정';
   t.tHead.innerHTML = '<tr><th>항목</th>' + f.periods.map((p) => `<th class="${p.estimate ? 'est' : ''}">${esc(p.title)}${p.estimate ? ' (E)' : ''}</th>`).join('') + '</tr>';
   t.tBodies[0].innerHTML = f.rows.map((r) => `<tr><td>${esc(r.title)}</td>` +
     r.values.map((v) => `<td class="${String(v).startsWith('-') && v !== '-' ? 'dn' : ''}">${esc(v === '-' ? '−' : v)}</td>`).join('') + '</tr>').join('');
@@ -543,8 +554,8 @@ function renderMacro(m) {
   $('macro-groups').innerHTML = MACRO_GROUPS.filter(([g]) => (m.groups[g] || []).length).map(([g, title]) =>
     `<section class="win"><div class="win-h"><span class="win-t">${esc(title)}</span><span class="win-tag">${esc(g.toUpperCase())}</span></div>` +
     `<div class="mrows">${m.groups[g].map(row).join('')}</div></section>`).join('');
-  $('macro-world').innerHTML = m.world.map((x) => `<div class="mrow"><span class="n">${esc(x.name)}<small>${esc(x.nation)}</small></span>` +
-    `<span class="v ${cls(x.chg)}">${fmt(x.price, 2)}</span><span class="c ${cls(x.chg)}">${arrow(x.chg)} ${signed(x.chg, 2)} (${pct(x.pct)})</span></div>`).join('') ||
+  $('macro-world').innerHTML = m.world.map((x) => `<button type="button" class="mrow" data-code="${esc(x.code)}"><span class="n">${esc(x.name)}<small>${esc(x.nation)}</small></span>` +
+    `<span class="v ${cls(x.chg)}">${fmt(x.price, 2)}</span><span class="c ${cls(x.chg)}">${arrow(x.chg)} ${signed(x.chg, 2)} (${pct(x.pct)})</span></button>`).join('') ||
     '<div class="empty">해외 지수를 불러오지 못했습니다</div>';
 }
 
@@ -573,6 +584,7 @@ async function loadMacro() {
   await loadMacroChart();
 }
 
+$('macro-world').addEventListener('click', (e) => { const b = e.target.closest('[data-code]'); if (b) selectCode(b.dataset.code, true); });
 $('macro-groups').addEventListener('click', (e) => {
   const b = e.target.closest('button.mrow');
   if (!b) return;
@@ -589,33 +601,38 @@ const saveHoldings = () => save('port', JSON.stringify(holdings));
 const won = (v) => (v == null ? '−' : fmt(Math.round(v)));
 
 function renderPort(prices) {
+  const fx = state.usdkrw || 0;
   const rows = holdings.map((h) => {
     const p = prices[h.code];
+    const cur = (p && p.currency) || h.currency || (isUS(h.code) ? 'USD' : 'KRW');
+    const k = cur === 'USD' ? fx : 1; // 원화 환산 배수
     const price = p ? p.price : null;
-    return { ...h, name: (p && p.name) || h.name, price, pct: p ? p.pct : null,
+    return { ...h, cur, symbol: (p && p.symbol) || h.symbol || h.code, name: (p && p.name) || h.name, price, pct: p ? p.pct : null,
       value: price == null ? null : price * h.qty, cost0: h.cost * h.qty,
-      day: p ? p.chg * h.qty : 0 };
+      valueKrw: (price == null ? h.cost : price) * h.qty * k, costKrw: h.cost * h.qty * k, dayKrw: p ? p.chg * h.qty * k : 0 };
   });
-  const totalCost = rows.reduce((a, r) => a + r.cost0, 0);
-  const totalValue = rows.reduce((a, r) => a + (r.value ?? r.cost0), 0);
-  const pnl = totalValue - totalCost, day = rows.reduce((a, r) => a + r.day, 0);
+  const hasUsd = rows.some((r) => r.cur === 'USD');
+  const totalCost = rows.reduce((a, r) => a + r.costKrw, 0);
+  const totalValue = rows.reduce((a, r) => a + r.valueKrw, 0);
+  const pnl = totalValue - totalCost, day = rows.reduce((a, r) => a + r.dayKrw, 0);
   const card = (label, value, sub, c = '') => `<div class="card"><span class="sum-l">${label}</span><span class="card-px ${c}">${value}</span><span class="sum-s ${c}">${sub}</span></div>`;
   $('port-sum').innerHTML = card('총 매입금액', won(totalCost) + '원', `${rows.length}종목`) +
-    card('총 평가금액', won(totalValue) + '원', '현재가 기준') +
+    card('총 평가금액', won(totalValue) + '원', hasUsd ? (fx ? `달러 환산 ${fmt(fx, 2)}원` : '달러 보유분 제외 (환율 조회 실패)') : '현재가 기준') +
     card('평가손익', signed(Math.round(pnl)) + '원', totalCost ? pct(pnl / totalCost * 100) : '−', cls(pnl)) +
     card('당일 손익', signed(Math.round(day)) + '원', totalValue - day ? pct(day / (totalValue - day) * 100) : '−', cls(day));
 
   $('port').tBodies[0].innerHTML = rows.length ? rows.map((r) => {
     const g = r.value == null ? null : r.value - r.cost0;
-    return `<tr><td>${esc(r.code)}</td><td class="nm" data-code="${esc(r.code)}">${esc(r.name)}</td><td>${fmt(r.qty)}</td><td>${won(r.cost)}</td>` +
-      `<td class="${cls(r.pct)} b">${won(r.price)}</td><td class="${cls(r.pct)}">${pct(r.pct)}</td><td>${won(r.value)}</td>` +
-      `<td class="${cls(g)} b">${g == null ? '−' : signed(Math.round(g))}</td><td class="${cls(g)} b">${g == null || !r.cost0 ? '−' : pct(g / r.cost0 * 100)}</td>` +
-      `<td>${totalValue ? ((r.value ?? r.cost0) / totalValue * 100).toFixed(1) + '%' : '−'}</td>` +
+    const gain = g == null ? '−' : (g > 0 ? '+' : g < 0 ? '-' : '') + money(Math.abs(g), r.cur);
+    return `<tr><td>${esc(r.symbol)}</td><td class="nm" data-code="${esc(r.code)}">${esc(r.name)}${r.cur === 'USD' ? '<span class="badge">US</span>' : ''}</td><td>${fmt(r.qty)}</td><td>${money(r.cost, r.cur)}</td>` +
+      `<td class="${cls(r.pct)} b">${money(r.price, r.cur)}</td><td class="${cls(r.pct)}">${pct(r.pct)}</td><td>${money(r.value, r.cur)}</td>` +
+      `<td class="${cls(g)} b">${gain}</td><td class="${cls(g)} b">${g == null || !r.cost0 ? '−' : pct(g / r.cost0 * 100)}</td>` +
+      `<td>${totalValue ? (r.valueKrw / totalValue * 100).toFixed(1) + '%' : '−'}</td>` +
       `<td><button type="button" class="del" data-del="${esc(r.code)}" aria-label="${esc(r.name)} 삭제">✕</button></td></tr>`;
-  }).join('') : '<tr><td colspan="11" style="text-align:left">보유 종목이 없습니다. 오른쪽에서 종목을 추가하면 평가손익을 실시간 시세로 계산합니다.</td></tr>';
+  }).join('') : '<tr><td colspan="11" style="text-align:left">보유 종목이 없습니다. 오른쪽에서 국내·미국 종목을 추가하면 평가손익을 현재 시세로 계산합니다.</td></tr>';
 
-  $('port-alloc').innerHTML = rows.length ? [...rows].sort((a, b) => (b.value ?? b.cost0) - (a.value ?? a.cost0)).map((r) => {
-    const w = totalValue ? (r.value ?? r.cost0) / totalValue * 100 : 0;
+  $('port-alloc').innerHTML = rows.length ? [...rows].sort((a, b) => b.valueKrw - a.valueKrw).map((r) => {
+    const w = totalValue ? r.valueKrw / totalValue * 100 : 0;
     return `<div class="mrow alloc"><span class="n">${esc(r.name)}</span><span class="track"><i style="width:${w}%"></i></span><span class="v">${w.toFixed(1)}%</span></div>`;
   }).join('') : '<div class="empty">종목을 추가하면 비중이 표시됩니다</div>';
 }
@@ -675,6 +692,9 @@ async function loadPort() {
     return;
   }
   let prices = {};
+  if (holdings.some((h) => isUS(h.code)) && !state.usdkrw) {
+    try { const o = await api('overview'); const u = o.fx.find((f) => f.code === 'FX_USDKRW'); if (u) state.usdkrw = u.price; } catch { /* 환율 없이 표시 */ }
+  }
   if (holdings.length) {
     try { prices = Object.fromEntries((await api('quotes?codes=' + holdings.map((h) => h.code).join(','))).map((q) => [q.code, q])); }
     catch (e) { showMsg(`시세를 불러오지 못했습니다 (${e.message})`); }
@@ -688,8 +708,8 @@ $('port-form').addEventListener('submit', async (e) => {
   const text = $('pf-code').value.trim(), qty = Number($('pf-qty').value), costIn = $('pf-cost').value.trim();
   if (!text || !(qty > 0)) { msg.textContent = '종목과 수량을 입력하세요.'; return; }
   try {
-    let code = text.toUpperCase();
-    if (!(/^[0-9A-Z]{6}$/.test(code) && /\d/.test(code))) {
+    let code = isUS(text) ? text : text.toUpperCase();
+    if (!isUS(code) && !(/^[0-9A-Z]{6}$/.test(code) && /\d/.test(code))) {
       const list = await api('search?q=' + encodeURIComponent(text));
       if (!list.length) { msg.textContent = `'${text}' 종목을 찾지 못했습니다.`; return; }
       code = list[0].code;
@@ -700,7 +720,7 @@ $('port-form').addEventListener('submit', async (e) => {
     if (!(cost >= 0)) { msg.textContent = '평단가를 확인하세요.'; return; }
     const cur = holdings.find((h) => h.code === code);
     if (cur) { cur.cost = (cur.cost * cur.qty + cost * qty) / (cur.qty + qty); cur.qty += qty; }
-    else holdings.push({ code, name: q.name, qty, cost });
+    else holdings.push({ code, symbol: q.symbol, currency: q.currency, name: q.name, qty, cost });
     saveHoldings();
     msg.textContent = `${q.name} ${fmt(qty)}주를 추가했습니다.`;
     e.target.reset();
@@ -768,7 +788,7 @@ let suggestions = [], sel = 0, searchSeq = 0, searchTimer = null;
 function renderSuggest() {
   $('suggest').hidden = !suggestions.length;
   $('suggest').innerHTML = suggestions.map((s, i) =>
-    `<li data-code="${esc(s.code)}" class="${i === sel ? 'sel' : ''}"><span>${esc(s.name)}</span><span>${esc(s.code)} · ${esc(s.market || '')}</span></li>`).join('');
+    `<li data-code="${esc(s.code)}" class="${i === sel ? 'sel' : ''}"><span>${esc(s.name)}</span><span>${esc(s.symbol || s.code)} · ${esc(s.market || '')}</span></li>`).join('');
 }
 function closeSuggest() { suggestions = []; renderSuggest(); }
 
@@ -793,6 +813,8 @@ async function runCommand(raw) {
   if (upper === 'HOGA') return go('stock');
   if (upper in RANGES || upper === '1D') return setRange(upper, true);
   if (INDEX_ALIAS[upper]) return selectCode(INDEX_ALIAS[upper], true);
+  if (US_ALIAS[upper]) return selectCode(US_ALIAS[upper], true);
+  if (isUS(text) && !/\s/.test(text)) return selectCode(text, true);
   if (/^[0-9A-Z]{6}$/.test(upper) && /\d/.test(upper)) return selectCode(upper, true);
   try {
     const list = await api('search?q=' + encodeURIComponent(text));
@@ -871,21 +893,85 @@ function bindTabs(id, key) {
 }
 bindTabs('rank-type', 'rankType');
 bindTabs('rank-market', 'rankMarket');
+function syncRankTabs(market = state.rankMarket) {
+  const us = US_MARKETS.includes(market);
+  const vol = document.querySelector('#rank-type [data-v="quantTop"]');
+  vol.hidden = us;
+  if (us && state.rankType === 'quantTop') {
+    state.rankType = 'marketValue';
+    document.querySelectorAll('#rank-type button').forEach((x) => x.classList.toggle('on', x.dataset.v === 'marketValue'));
+  }
+  document.querySelector('#rank thead th:nth-child(3)').textContent = us ? '현재가(USD)' : '현재가(KRW)';
+}
+// 순위를 받기 전에(캡처 단계) 누른 시장에 맞춰 탭을 정리한다
+$('rank-market').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) syncRankTabs(b.dataset.v); }, true);
 window.addEventListener('hashchange', applyView);
+
+// ── 프로그램 잠금 (비밀번호)
+let auth = { hasPassword: false, locked: false };
+function showLock() {
+  if (!$('lock').hidden) return;
+  $('lock').hidden = false; $('lock-msg').textContent = ''; $('lock-pw').value = '';
+  setTimeout(() => $('lock-pw').focus(), 0);
+}
+$('lock-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('lock-msg').textContent = '확인 중…';
+  try {
+    const res = await fetch('api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('lock-pw').value }) });
+    const r = await res.json().catch(() => ({}));
+    if (res.ok) return location.reload();
+    $('lock-msg').textContent = r.error || '비밀번호가 올바르지 않습니다.';
+    $('lock-pw').select();
+  } catch { $('lock-msg').textContent = '프로그램에 연결하지 못했습니다.'; }
+});
+
+function renderPwState() {
+  $('ks-pw').textContent = auth.hasPassword ? '사용 중' : '사용 안 함';
+  $('ks-pw').className = 'badge ' + (auth.hasPassword ? 'ok' : '');
+  $('pw-cur-row').hidden = !auth.hasPassword;
+  $('pw-remove').hidden = !auth.hasPassword; $('pw-lock').hidden = !auth.hasPassword;
+}
+async function changePassword(next) {
+  const msg = $('pw-msg');
+  try {
+    const r = await api('auth/password', { current: $('pw-cur').value, next });
+    auth = { hasPassword: r.hasPassword, locked: false };
+    ['pw-cur', 'pw-new', 'pw-new2'].forEach((id) => { $(id).value = ''; });
+    renderPwState();
+    msg.textContent = r.hasPassword ? '비밀번호를 설정했습니다. 다음 실행부터 비밀번호를 묻습니다.' : '비밀번호를 해제했습니다.';
+  } catch (err) { msg.textContent = `변경하지 못했습니다 (${err.message})`; }
+}
+$('pw-save').addEventListener('click', () => {
+  const a = $('pw-new').value, b = $('pw-new2').value;
+  if (a.length < 4) { $('pw-msg').textContent = '새 비밀번호는 4자 이상이어야 합니다.'; return; }
+  if (a !== b) { $('pw-msg').textContent = '새 비밀번호가 서로 다릅니다.'; return; }
+  changePassword(a);
+});
+$('pw-remove').addEventListener('click', () => changePassword(''));
+$('pw-lock').addEventListener('click', async () => { try { await api('auth/lock', {}); } catch { /* 무시 */ } location.reload(); });
+
+// 프로그램 창이 열려 있는 동안 연결을 유지한다(창을 모두 닫으면 프로그램이 스스로 종료된다).
+try { new EventSource('api/alive'); } catch { /* 미지원 환경 */ }
 
 // ── 시작
 function tick() { $('clock').textContent = `SEOUL ${kstTime(Date.now())} KST`; }
 tick(); setInterval(tick, 1000);
-document.querySelectorAll('#range button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.range));
-applyView();
-selectCode(state.code).then((ok) => { if (!ok) selectCode('005930'); });
-refresh();
-loadKeyState();
-renderAlertBtn();
-// 어느 화면에 있든 속보는 계속 확인한다
-setInterval(() => { if (currentView() !== 'market' || document.hidden) pollWire(); }, WIRE_POLL_MS);
-if (currentView() !== 'market') pollWire();
-setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
-// 종목 화면에서는 호가·체결을 더 자주 갱신한다
-setInterval(() => { if (!document.hidden && currentView() === 'stock' && state.quote && state.quote.status === 'OPEN') { loadBook(); loadTicks(); } }, 4000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+function boot() {
+  document.querySelectorAll('#range button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.range));
+  syncRankTabs();
+  applyView();
+  selectCode(state.code).then((ok) => { if (!ok) selectCode('005930'); });
+  refresh();
+  loadKeyState();
+  renderAlertBtn();
+  renderPwState();
+  // 어느 화면에 있든 속보는 계속 확인한다
+  setInterval(() => { if (currentView() !== 'market' || document.hidden) pollWire(); }, WIRE_POLL_MS);
+  if (currentView() !== 'market') pollWire();
+  setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+  // 종목 화면에서는 호가·체결을 더 자주 갱신한다
+  setInterval(() => { if (!document.hidden && currentView() === 'stock' && state.quote && state.quote.status === 'OPEN') { loadBook(); loadTicks(); } }, 4000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+}
+fetch('api/auth').then((r) => r.json()).then((a) => { auth = a; if (a.locked) showLock(); else boot(); }).catch(boot);

@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,500,0,0&display=block">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -27,7 +28,7 @@
     <div class="cmd-wrap">
       <div class="cmd">
         <span class="prompt">CMD&gt;</span>
-        <input id="cmd" type="text" autocomplete="off" spellcheck="false" placeholder="005930 &lt;GO&gt;  ·  삼성전자  ·  KOSPI  ·  1D 3M 1Y  ·  HELP">
+        <input id="cmd" type="text" autocomplete="off" spellcheck="false" placeholder="005930 &lt;GO&gt;  ·  삼성전자  ·  AAPL  ·  테슬라  ·  NASDAQ  ·  1D 3M 1Y  ·  HELP">
         <button id="go" class="go" type="button">GO</button>
         <ul id="suggest" class="suggest" hidden></ul>
       </div>
@@ -80,6 +81,8 @@
           <div class="tabs" id="rank-market">
             <button type="button" data-v="KOSPI" class="on">KOSPI</button>
             <button type="button" data-v="KOSDAQ">KOSDAQ</button>
+            <button type="button" data-v="NASDAQ">NASDAQ</button>
+            <button type="button" data-v="NYSE">NYSE</button>
           </div>
         </div>
         <div class="table-wrap">
@@ -146,7 +149,7 @@
           <canvas id="chart" class="chart"></canvas>
         </section>
         <section class="win">
-          <div class="win-h"><span class="win-t"><span class="icon">table_chart</span>연간 재무 요약</span><span class="win-tag">매출·이익 억원 · (E) 추정</span></div>
+          <div class="win-h"><span class="win-t"><span class="icon">table_chart</span>연간 재무 요약</span><span class="win-tag" id="fin-unit">매출·이익 억원 · (E) 추정</span></div>
           <div class="table-wrap"><table id="fin" class="grid-table"><thead></thead><tbody></tbody></table></div>
         </section>
       </div>
@@ -216,10 +219,10 @@
           <div class="win-h"><span class="win-t"><span class="icon">add_circle</span>종목 추가</span><span class="win-tag accent">ADD</span></div>
           <form id="port-form" class="form" autocomplete="off">
             <label for="pf-code">종목명 또는 코드</label>
-            <input id="pf-code" type="text" placeholder="예: 삼성전자, 005930" required>
+            <input id="pf-code" type="text" placeholder="예: 삼성전자, 005930, AAPL, 테슬라" required>
             <label for="pf-qty">수량 (주)</label>
             <input id="pf-qty" type="number" min="1" step="1" placeholder="10" required>
-            <label for="pf-cost">평단가 (원) — 비우면 현재가</label>
+            <label for="pf-cost">평단가 (국내 원, 미국 달러) — 비우면 현재가</label>
             <input id="pf-cost" type="number" min="0" step="any" placeholder="현재가">
             <button type="submit" class="btn-accent">추가</button>
             <p id="pf-msg" class="form-msg"></p>
@@ -246,7 +249,7 @@
 <!-- ───── API 키 설정 ───── -->
 <div id="keys-modal" class="modal" hidden>
   <form id="keys-form" class="modal-box" autocomplete="off">
-    <div class="win-h"><span class="win-t"><span class="icon">key</span>API 키 설정</span><button type="button" id="keys-close" class="x" aria-label="닫기">✕</button></div>
+    <div class="win-h"><span class="win-t"><span class="icon">key</span>설정 · API 키 · 비밀번호</span><button type="button" id="keys-close" class="x" aria-label="닫기">✕</button></div>
     <div class="form">
       <p class="hint">키는 이 PC의 설정 파일에만 저장되고, 해당 기관 서버 외에는 전송되지 않습니다. 비워 두면 기존 값을 유지합니다.</p>
 
@@ -271,12 +274,41 @@
       <label class="check"><input id="k-kis-paper" type="checkbox"> 모의투자 키</label>
 
       <div class="form-row">
-        <button type="submit" class="btn-accent">저장 및 연결 확인</button>
+        <button type="submit" class="btn-accent">키 저장 및 연결 확인</button>
         <button type="button" id="keys-clear">키 모두 삭제</button>
       </div>
       <p id="keys-msg" class="form-msg"></p>
       <p id="keys-file" class="hint"></p>
+
+      <div class="key-h"><span>프로그램 비밀번호</span><span id="ks-pw" class="badge"></span></div>
+      <p class="hint">설정하면 프로그램을 켤 때마다 비밀번호를 묻습니다. 잊어버리면 설정 파일을 지워야 하며, 그때 저장된 API 키도 함께 지워집니다.</p>
+      <div id="pw-cur-row" hidden>
+        <label for="pw-cur">현재 비밀번호</label>
+        <input id="pw-cur" type="password" autocomplete="off">
+      </div>
+      <label for="pw-new">새 비밀번호 (4자 이상)</label>
+      <input id="pw-new" type="password" autocomplete="off">
+      <label for="pw-new2">새 비밀번호 확인</label>
+      <input id="pw-new2" type="password" autocomplete="off">
+      <div class="form-row">
+        <button type="button" id="pw-save" class="btn-accent">비밀번호 저장</button>
+        <button type="button" id="pw-remove" hidden>비밀번호 해제</button>
+        <button type="button" id="pw-lock" hidden>지금 잠그기</button>
+      </div>
+      <p id="pw-msg" class="form-msg"></p>
     </div>
+  </form>
+</div>
+
+<!-- ───── 잠금 화면 ───── -->
+<div id="lock" class="lock" hidden>
+  <form id="lock-form" class="lock-box" autocomplete="off">
+    <span class="brand">KRX::APEX</span>
+    <p class="hint">프로그램이 잠겨 있습니다. 비밀번호를 입력하세요.</p>
+    <label for="lock-pw" class="sr">비밀번호</label>
+    <input id="lock-pw" type="password" autocomplete="off" placeholder="비밀번호">
+    <button type="submit" class="btn-accent">잠금 해제</button>
+    <p id="lock-msg" class="form-msg"></p>
   </form>
 </div>
 
