@@ -12,7 +12,7 @@ try { const s = require('node:sea'); if (s.isSea()) sea = s; } catch { /* 일반
 
 const HOST = '127.0.0.1'; // 키 설정 API가 있으므로 이 PC에서만 접속 가능하게 한다
 const PUBLIC = path.join(__dirname, 'public');
-const FILES = ['index.html', 'style.css', 'app.js', 'chart.js', 'icon.svg'];
+const FILES = ['index.html', 'style.css', 'app.js', 'chart.js', 'lwc.js', 'icon.svg'];
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const APP_ID = 'krx-apex';
 
@@ -29,6 +29,7 @@ function readPublic(name) {
 const ROUTES = {
   overview: { ttl: 10e3, run: () => data.overview() },
   usoverview: { ttl: 15e3, run: () => data.usOverview() },
+  universe: { ttl: 30e3, run: (q) => data.universe(q.get('region') === 'US' ? 'US' : 'KR') },
   rank: { ttl: 10e3, run: (q) => data.rank(q.get('type') || undefined, q.get('market') || undefined) },
   quote: { ttl: 5e3, run: (q) => data.quote(code(q)) },
   quotes: { ttl: 5e3, run: (q) => data.quotes(codes(q)) },

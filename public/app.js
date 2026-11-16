@@ -4,7 +4,7 @@ const REFRESH_MS = 20000;
 const INDEX_ALIAS = { KOSPI: 'KOSPI', 코스피: 'KOSPI', KOSDAQ: 'KOSDAQ', 코스닥: 'KOSDAQ', KPI200: 'KPI200', 코스피200: 'KPI200' };
 const INDEX_TAG = { KOSPI: '001', KOSDAQ: '201', KPI200: '101' };
 const RANGES = { '1M': 22, '3M': 66, '1Y': 250, '3Y': Infinity };
-const VIEWS = ['market', 'stock', 'macro', 'port'];
+const VIEWS = ['market', 'stock', 'macro', 'port', 'map'];
 
 const state = {
   code: load('code') || '005930',
@@ -299,59 +299,88 @@ function withMA(rows) {
   }
   return bars;
 }
-function toWeekly(bars) {
-  const out = [];
-  let key = null;
-  for (const b of bars) {
-    const s = String(b.date);
-    const dt = new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)));
-    const monday = Math.floor((dt.getTime() / 86400e3 + 3) / 7); // 월요일 시작 주 번호
-    if (monday !== key) { out.push({ ...b }); key = monday; continue; }
-    const w = out[out.length - 1];
-    w.h = Math.max(w.h, b.h); w.l = Math.min(w.l, b.l); w.c = b.c; w.v += b.v;
-    w.date = b.date; w.ma5 = b.ma5; w.ma20 = b.ma20; w.ma60 = b.ma60;
-  }
-  return out;
-}
-
 const chart = createChart($('chart'), { onHover: renderReadout });
+let chartBars = [];
+const isoDate = (n) => { const t = String(n); return `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}`; };
 
 function renderReadout(bar) {
-  const b = bar || (chart.current && chart.current[chart.current.length - 1]);
+  const b = bar || chartBars[chartBars.length - 1];
   if (!b) { $('readout').textContent = ''; return; }
   $('readout').textContent = state.range === '1D'
     ? `${b.label}  ${fmt(b.c)}  거래량 ${fmt(b.v)}`
     : `${b.label}  시 ${fmt(b.o)}  고 ${fmt(b.h)}  저 ${fmt(b.l)}  종 ${fmt(b.c)}  거래량 ${fmt(b.v)}`;
 }
 
+// 일봉은 3년치를 모두 넣고 기간 버튼은 '처음 보여줄 범위'만 정한다 → 휠로 확대·축소, 끌어서 과거로 이동할 수 있다.
 function renderChart() {
+  const dp = isUS(state.code) ? 2 : undefined;
+  const hint = '<span>휠: 확대·축소 · 드래그: 이동</span>';
   if (state.range === '1D') {
     const d = state.intraday && state.intraday.code === state.code ? state.intraday : null;
-    const bars = d ? d.bars.map(([t, c, v]) => ({
+    const day = d && d.date ? String(d.date) : null;
+    chartBars = d ? d.bars.map(([t, c, v]) => ({
+      // 현지 시각을 그대로 UTC로 넣어 축에 현지 시각이 보이게 한다
+      time: Date.UTC(day ? +day.slice(0, 4) : 2000, day ? +day.slice(4, 6) - 1 : 0, day ? +day.slice(6, 8) : 1, +t.slice(0, 2), +t.slice(2)) / 1000,
       label: `${t.slice(0, 2)}:${t.slice(2)}`, o: c, h: c, l: c, c, v,
-      tickKey: t.slice(0, 2), tickLabel: `${t.slice(0, 2)}시`,
     })) : [];
-    chart.current = bars;
-    chart.set({ mode: 'line', bars, prevClose: d ? d.prevClose : null, dp: isUS(state.code) ? 2 : undefined });
-    $('legend').innerHTML = d ? '<span>점선: 전일 종가</span>' : '';
+    chart.set({ mode: 'line', bars: chartBars, prevClose: d ? d.prevClose : null, dp });
+    $('legend').innerHTML = d ? '<span>점선: 전일 종가</span>' + hint : '';
   } else {
     const d = state.daily && state.daily.code === state.code ? state.daily : null;
-    let bars = d ? d.bars.slice(-Math.min(RANGES[state.range], d.bars.length)) : [];
-    const weekly = bars.length > 320;
-    if (weekly) bars = toWeekly(bars);
-    const yearly = bars.length > 130;
-    bars = bars.map((b) => {
-      const s = String(b.date);
-      return { ...b, label: dateLabel(b.date) + (weekly ? ' 주' : ''),
-        tickKey: yearly ? s.slice(0, 4) + Math.floor((+s.slice(4, 6) - 1) / 3) : s.slice(0, 6),
-        tickLabel: `${s.slice(2, 4)}.${s.slice(4, 6)}` };
-    });
-    chart.current = bars;
-    chart.set({ mode: 'candle', bars, dp: isUS(state.code) ? 2 : undefined });
+    chartBars = d ? d.bars.map((b) => ({ ...b, time: isoDate(b.date), label: dateLabel(b.date) })) : [];
+    const n = RANGES[state.range];
+    chart.set({ mode: 'candle', bars: chartBars, dp, visible: n === Infinity ? 0 : n });
     $('legend').innerHTML = d ? [['ma5', '5일선'], ['ma20', '20일선'], ['ma60', '60일선']]
-      .map(([k, t]) => `<span><i style="background:var(--${k})"></i>${t}</span>`).join('') + (weekly ? '<span>주봉</span>' : '') : '';
+      .map(([k, t]) => `<span><i style="background:var(--${k})"></i>${t}</span>`).join('') + hint : '';
   }
   renderReadout(null);
+}
+
+// ── TradingView 고급 차트(지표·그리기 도구). 종목이 바뀌면 위젯도 다시 띄운다.
+const TV_INDEX = { '.IXIC': 'NASDAQ:IXIC', '.DJI': 'DJ:DJI', '.INX': 'SP:SPX', '.NDX': 'NASDAQ:NDX', '.SOX': 'NASDAQ:SOX', '.VIX': 'CBOE:VIX' };
+let chartMode = load('chartMode') === 'tv' ? 'tv' : 'basic';
+let tvSymbol = '';
+function tvSymbolOf(q) {
+  if (TV_INDEX[q.code]) return TV_INDEX[q.code];
+  if (isUS(q.code)) return `${['NASDAQ', 'NYSE', 'AMEX'].includes(q.market) ? q.market : 'NASDAQ'}:${q.symbol}`;
+  return '';
+}
+function renderChartMode() {
+  const q0 = state.quote && state.quote.code === state.code ? state.quote : null;
+  const unsupported = chartMode === 'tv' && !!q0 && !isUS(q0.code); // 국내 종목·지수
+  const tv = chartMode === 'tv' && !unsupported;
+  document.querySelectorAll('#chart-mode button').forEach((b) => b.classList.toggle('on', b.dataset.v === chartMode));
+  $('chart').hidden = tv; $('readout').hidden = tv; $('range').hidden = tv; $('legend').hidden = tv;
+  $('tv').hidden = !tv; $('tv-note').hidden = !tv && !unsupported;
+  if (unsupported) $('tv-note').textContent = 'TradingView 위젯은 국내(KRX) 종목을 제공하지 않아 기본 차트로 표시합니다. 미국 종목에서는 TradingView 차트가 열립니다.';
+  if (!tv) { $('tv').innerHTML = ''; tvSymbol = ''; chart.fit(); return; }
+  const q = state.quote;
+  if (!q || q.code !== state.code) return;
+  const sym = tvSymbolOf(q);
+  $('tv-note').textContent = 'TradingView 위젯입니다. 지표 추가, 그리기 도구, 봉 주기 변경을 위젯 안에서 할 수 있습니다.';
+  if (sym === tvSymbol) return;
+  tvSymbol = sym;
+  const p = new URLSearchParams({ symbol: sym, interval: 'D', theme: 'dark', style: '1', locale: 'kr', timezone: 'Asia/Seoul',
+    hide_side_toolbar: '0', allow_symbol_change: '0', withdateranges: '1', saveimage: '0', studies: 'MASimple@tv-basicstudies' });
+  $('tv').innerHTML = `<iframe title="TradingView 차트 ${esc(sym)}" src="https://s.tradingview.com/widgetembed/?${p}" allowfullscreen></iframe>`;
+}
+$('chart-mode').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  chartMode = b.dataset.v; save('chartMode', chartMode);
+  renderChartMode();
+});
+
+// ── 미국 종목은 투자자별 순매수 자리에 안내를 보여준다
+function loadOwnership() {
+  const q = state.quote;
+  const usStock = !!q && isUS(q.code) && !q.isIndex;
+  $('own').hidden = !usStock; $('flows-wrap').hidden = usStock;
+  $('flows-title').textContent = usStock ? '투자자별 수급 (미국)' : '투자자별 순매수 (주)';
+  if (usStock) {
+    $('own').innerHTML = '<p class="own-note">미국 시장은 국내처럼 개인·외국인·기관의 일별 순매수를 집계해 공시하지 않아, 이 항목에 해당하는 데이터가 없습니다.</p>' +
+      '<p class="own-note">가장 가까운 공개 자료는 기관 보유 내역(분기 13F 공시), 내부자 거래(Form 4), 공매도 잔량(월 2회)입니다. 이 프로그램에는 아직 연결되어 있지 않습니다.</p>';
+  }
 }
 
 async function loadChart(force) {
@@ -427,6 +456,7 @@ function loadView(v, periodic = false) {
     return Promise.allSettled([loadBook(), loadTicks()]);
   }
   if (v === 'macro') return loadMacro();
+  if (v === 'map') return loadMap();
   if (v === 'port') return loadPort();
   return null;
 }
@@ -494,7 +524,7 @@ function renderFin(f) {
 function loadStockExtras() {
   const code = state.code;
   const isStock = state.quote && !state.quote.isIndex;
-  loadBook(); loadTicks();
+  loadBook(); loadTicks(); loadOwnership(); renderChartMode();
   if (!isStock) { renderFin(null); renderWire($('disc'), []); return; }
   api(`financials?code=${code}`).then((f) => code === state.code && renderFin(f)).catch(() => renderFin(null));
   api(`disclosures?code=${code}`).then((d) => code === state.code && renderWire($('disc'), d, '공시가 없습니다')).catch(() => renderWire($('disc'), [], '공시를 불러오지 못했습니다'));
@@ -627,7 +657,7 @@ async function loadMacroChart() {
   try {
     const rows = await api(`macrochart?category=${encodeURIComponent(category)}&code=${encodeURIComponent(code)}`);
     if (macroSel.category !== category || macroSel.code !== code) return;
-    macroBars = rows.map(([d, c]) => { const s = String(d); return { label: dateLabel(d), o: c, h: c, l: c, c, v: 0, tickKey: s.slice(0, 6), tickLabel: `${s.slice(2, 4)}.${s.slice(4, 6)}` }; });
+    macroBars = rows.map(([d, c]) => { return { time: isoDate(d), label: dateLabel(d), o: c, h: c, l: c, c, v: 0 }; });
     macroLoaded = key;
   } catch (e) { macroBars = []; showMsg(`추이를 불러오지 못했습니다 (${e.message})`); }
   macroChart.dp = item ? item.dp : 2;
@@ -841,7 +871,7 @@ $('keys-modal').addEventListener('mousedown', (e) => { if (e.target === $('keys-
 document.addEventListener('click', (e) => { if (e.target.closest('[data-open-keys]')) openKeys(); });
 
 // ── 명령 입력
-const HELP = 'CMD: 종목명 또는 6자리 코드 <GO> · KOSPI / KOSDAQ / KPI200 · 1D 1M 3M 1Y 3Y(차트 기간) · MKT · MACRO · PORT · KEYS · ↑↓ 후보 선택 · / 입력창 · F1 도움말 F2 마켓 F3 종목 F4 거시 F8 포트폴리오 F9 API 키';
+const HELP = 'CMD: 종목명 또는 6자리 코드 <GO> · KOSPI / KOSDAQ / KPI200 · 1D 1M 3M 1Y 3Y(차트 기간) · MKT · MACRO · PORT · MAP · KEYS · ↑↓ 후보 선택 · / 입력창 · F1 도움말 F2 마켓 F3 종목 F4 거시 F6 맵·스크리너 F8 포트폴리오 F9 API 키';
 let suggestions = [], sel = 0, searchSeq = 0, searchTimer = null;
 
 function renderSuggest() {
@@ -867,6 +897,7 @@ async function runCommand(raw) {
   if (upper === 'HELP' || upper === '?' || text === '도움말') return showMsg(HELP);
   if (upper === 'MKT' || upper === '/MKT') return go('market');
   if (upper === 'MACRO') return go('macro');
+  if (upper === 'MAP' || upper === 'SCREEN') return go('map');
   if (upper === 'PORT') return go('port');
   if (upper === 'KEYS' || upper === 'KEY') return openKeys();
   if (upper === 'HOGA') return go('stock');
@@ -920,7 +951,7 @@ $('suggest').addEventListener('mousedown', (e) => {
 });
 $('cmd').addEventListener('blur', () => setTimeout(closeSuggest, 100));
 
-const FKEYS = { F1: () => showMsg($('msg').hidden ? HELP : ''), F2: () => go('market'), F3: () => go('stock'), F4: () => go('macro'), F8: () => go('port'), F9: () => ($('keys-modal').hidden ? openKeys() : closeKeys()) };
+const FKEYS = { F1: () => showMsg($('msg').hidden ? HELP : ''), F2: () => go('market'), F3: () => go('stock'), F4: () => go('macro'), F6: () => go('map'), F8: () => go('port'), F9: () => ($('keys-modal').hidden ? openKeys() : closeKeys()) };
 document.addEventListener('keydown', (e) => {
   if (FKEYS[e.key]) { e.preventDefault(); FKEYS[e.key](); }
   else if (e.key === 'Escape' && !$('keys-modal').hidden) closeKeys();
@@ -965,6 +996,180 @@ function syncRankTabs(market = state.rankMarket) {
 // 순위를 받기 전에(캡처 단계) 누른 시장에 맞춰 탭을 정리한다
 $('rank-market').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) syncRankTabs(b.dataset.v); }, true);
 window.addEventListener('hashchange', applyView);
+
+// ── 맵 & 스크리너: 시가총액 상위 종목을 업종별 트리맵과 조건 검색 표로 본다.
+let mapRegion = load('mapRegion') === 'US' || (load('mapRegion') == null && state.region === 'US') ? 'US' : 'KR';
+let mapMode = load('mapMode') === 'screen' ? 'screen' : 'map';
+let uni = [], uniRegion = '';
+const sortState = { key: 'mcap', dir: -1 };
+const PCT_LIMIT = 3; // 색이 가장 진해지는 등락률(%)
+
+// 등락률 → 색. 0%는 중립 회색, 상승은 빨강, 하락은 파랑으로 갈수록 진해진다.
+function heatColor(p) {
+  const t = Math.min(1, Math.abs(p || 0) / PCT_LIMIT);
+  const base = [49, 53, 63], to = p > 0 ? [226, 58, 55] : [31, 108, 220];
+  return `rgb(${base.map((c, i) => Math.round(c + (to[i] - c) * t)).join(',')})`;
+}
+
+// 사각형을 값에 비례하는 조각으로 나눈다(정사각형에 가깝게).
+function squarify(items, x, y, w, h) {
+  const out = [];
+  const total = items.reduce((a, i) => a + i.value, 0);
+  if (!total || w <= 0 || h <= 0) return out;
+  const scale = w * h / total;
+  const rest = items.map((i) => ({ i, a: i.value * scale }));
+  const worst = (row, side) => {
+    const sum = row.reduce((a, r) => a + r.a, 0);
+    const mx = Math.max(...row.map((r) => r.a)), mn = Math.min(...row.map((r) => r.a));
+    return Math.max(side * side * mx / (sum * sum), sum * sum / (side * side * mn));
+  };
+  const layout = (row) => {
+    const sum = row.reduce((a, r) => a + r.a, 0);
+    if (w >= h) {
+      const cw = sum / h; let cy = y;
+      for (const r of row) { const ch = r.a / cw; out.push({ item: r.i, x, y: cy, w: cw, h: ch }); cy += ch; }
+      x += cw; w -= cw;
+    } else {
+      const ch = sum / w; let cx = x;
+      for (const r of row) { const cw = r.a / ch; out.push({ item: r.i, x: cx, y, w: cw, h: ch }); cx += cw; }
+      y += ch; h -= ch;
+    }
+  };
+  let row = [];
+  while (rest.length) {
+    const side = Math.min(w, h);
+    if (!row.length || worst(row, side) >= worst([...row, rest[0]], side)) row.push(rest.shift());
+    else { layout(row); row = []; }
+  }
+  if (row.length) layout(row);
+  return out;
+}
+
+function renderTreemap() {
+  const box = $('treemap');
+  const W = box.clientWidth, H = Math.max(480, window.innerHeight - 190);
+  if (!W) return;
+  box.style.height = H + 'px';
+  if (!uni.length) { box.innerHTML = '<div class="empty">종목 정보를 불러오는 중…</div>'; return; }
+
+  // 업종별로 묶고, 비중이 작은 업종은 '기타'로 합친다
+  const total = uni.reduce((a, x) => a + x.mcap, 0);
+  const groups = new Map();
+  for (const x of uni) { if (!groups.has(x.sector)) groups.set(x.sector, []); groups.get(x.sector).push(x); }
+  const merged = new Map();
+  for (const [name, list] of groups) {
+    const sum = list.reduce((a, x) => a + x.mcap, 0);
+    const key = name !== '기타' && sum / total >= 0.012 ? name : '기타';
+    merged.set(key, [...(merged.get(key) || []), ...list]);
+  }
+  const sectors = [...merged].map(([name, list]) => ({ name, list: list.sort((a, b) => b.mcap - a.mcap), value: list.reduce((a, x) => a + x.mcap, 0) }))
+    .sort((a, b) => (a.name === '기타') - (b.name === '기타') || b.value - a.value);
+
+  const useName = mapRegion === 'KR'; // 국내는 종목명, 미국은 티커를 적는다
+  const html = [];
+  for (const s of squarify(sectors, 0, 0, W, H)) {
+    const sec = s.item, LABEL = 15;
+    const cells = squarify(sec.list.map((x) => ({ x, value: x.mcap })), 0, LABEL, s.w, Math.max(0, s.h - LABEL)).map((c) => {
+      const x = c.item.x, text = useName ? x.name : x.symbol;
+      const fs = Math.max(8, Math.min(26, c.w / (text.length * (useName ? 1.1 : 0.82)), c.h / 2.7));
+      const show = c.w >= 30 && c.h >= 18, showPct = show && c.h >= 30;
+      return `<button type="button" class="tm-cell" data-i="${uni.indexOf(x)}" style="left:${c.x.toFixed(1)}px;top:${c.y.toFixed(1)}px;width:${c.w.toFixed(1)}px;height:${c.h.toFixed(1)}px;background:${heatColor(x.pct)};font-size:${fs.toFixed(1)}px" aria-label="${esc(x.name)} ${pct(x.pct)}">` +
+        (show ? `<b>${esc(text)}</b>` : '') + (showPct ? `<i>${pct(x.pct)}</i>` : '') + '</button>';
+    }).join('');
+    const avg = sec.list.reduce((a, x) => a + x.pct * x.mcap, 0) / sec.value;
+    html.push(`<div class="tm-sector" style="left:${s.x.toFixed(1)}px;top:${s.y.toFixed(1)}px;width:${s.w.toFixed(1)}px;height:${s.h.toFixed(1)}px">` +
+      `<div class="tm-label">${esc(sec.name)} <span class="${cls(avg)}">${pct(avg)}</span></div>${cells}</div>`);
+  }
+  box.innerHTML = html.join('');
+}
+
+function renderMapChrome() {
+  document.querySelectorAll('#map-region button').forEach((b) => b.classList.toggle('on', b.dataset.v === mapRegion));
+  document.querySelectorAll('#map-mode button').forEach((b) => b.classList.toggle('on', b.dataset.v === mapMode));
+  $('map-wrap').hidden = mapMode !== 'map'; $('screen-wrap').hidden = mapMode !== 'screen'; $('map-legend').hidden = mapMode !== 'map';
+  $('map-legend').innerHTML = [-3, -2, -1, 0, 1, 2, 3].map((p) => `<span style="background:${heatColor(p)}">${p > 0 ? '+' : ''}${p}%</span>`).join('');
+  $('map-info').textContent = uni.length
+    ? `${mapRegion === 'US' ? 'NASDAQ · NYSE 시총 상위' : 'KOSPI · KOSDAQ 시총 상위'} ${fmt(uni.length)}종목 · 크기 = 시가총액 · 색 = 당일 등락률` : '';
+}
+
+// 스크리너
+const MCAP_STEPS = {
+  KR: [['0', '시가총액 전체'], ['1e12', '1조 원 이상'], ['5e12', '5조 원 이상'], ['1e13', '10조 원 이상'], ['5e13', '50조 원 이상']],
+  US: [['0', '시가총액 전체'], ['1e10', '100억 달러 이상'], ['5e10', '500억 달러 이상'], ['1e11', '1,000억 달러 이상'], ['1e12', '1조 달러 이상']],
+};
+function fillFilters() {
+  const opt = (list) => list.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+  $('sf-market').innerHTML = opt([['', '시장 전체'], ...[...new Set(uni.map((x) => x.market))].map((m) => [m, m])]);
+  $('sf-sector').innerHTML = opt([['', '업종 전체'], ...[...new Set(uni.map((x) => x.sector))].sort().map((m) => [m, m])]);
+  $('sf-mcap').innerHTML = opt(MCAP_STEPS[mapRegion]);
+}
+function renderScreen() {
+  const q = $('sf-q').value.trim().toLowerCase(), market = $('sf-market').value, sector = $('sf-sector').value;
+  const mcap = Number($('sf-mcap').value) || 0, vol = Number($('sf-vol').value) || 0, p = $('sf-pct').value;
+  const pctOk = { '': () => true, u3: (v) => v >= 3, u0: (v) => v > 0, d0: (v) => v < 0, d3: (v) => v <= -3 }[p];
+  const rows = uni.filter((x) => (!q || x.name.toLowerCase().includes(q) || x.symbol.toLowerCase().includes(q)) &&
+    (!market || x.market === market) && (!sector || x.sector === sector) && x.mcap >= mcap && x.volume >= vol && pctOk(x.pct));
+  const { key, dir } = sortState;
+  rows.sort((a, b) => (typeof a[key] === 'string' ? a[key].localeCompare(b[key], 'ko') : a[key] - b[key]) * dir);
+  const us = mapRegion === 'US', dp = us ? 2 : 0;
+  $('sf-count').textContent = `${fmt(rows.length)} / ${fmt(uni.length)}종목`;
+  document.querySelectorAll('#screen thead th').forEach((th) => {
+    th.classList.toggle('sorted', th.dataset.sort === key);
+    th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (th.dataset.sort === key ? (dir > 0 ? ' ▲' : ' ▼') : '');
+  });
+  $('screen').tBodies[0].innerHTML = rows.length ? rows.map((x) => {
+    const c = cls(x.chg);
+    return `<tr data-code="${esc(x.code)}"><td>${esc(x.symbol)}</td><td>${esc(x.name)}</td><td>${esc(x.market)}</td><td>${esc(x.industry || x.sector)}</td>` +
+      `<td class="${c} b">${us ? '$' : ''}${fmt(x.price, dp)}</td><td class="${c}">${arrow(x.chg)} ${signed(x.chg, dp)}</td><td class="${c} b">${pct(x.pct)}</td>` +
+      `<td>${fmt(x.volume)}</td><td>${esc(x.mcapText)}</td></tr>`;
+  }).join('') : '<tr><td colspan="9">조건에 맞는 종목이 없습니다. 조건을 넓혀 보세요.</td></tr>';
+}
+
+function renderMap() {
+  renderMapChrome();
+  if (mapMode === 'map') renderTreemap(); else renderScreen();
+}
+async function loadMap() {
+  renderMapChrome();
+  const region = mapRegion;
+  if (uniRegion !== region) { uni = []; renderMap(); }
+  try {
+    const list = await api(`universe?region=${region}`);
+    if (region !== mapRegion) return;
+    const first = uniRegion !== region;
+    uni = list; uniRegion = region;
+    if (first) fillFilters();
+    renderMap();
+  } catch (e) { $('treemap').innerHTML = `<div class="empty">종목 정보를 불러오지 못했습니다 (${esc(e.message)})</div>`; }
+}
+
+$('map-region').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b || b.dataset.v === mapRegion) return; mapRegion = b.dataset.v; save('mapRegion', mapRegion); loadMap(); });
+$('map-mode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; mapMode = b.dataset.v; save('mapMode', mapMode); renderMap(); });
+for (const id of ['sf-q', 'sf-market', 'sf-sector', 'sf-mcap', 'sf-pct', 'sf-vol']) $(id).addEventListener('input', renderScreen);
+$('sf-reset').addEventListener('click', () => { for (const id of ['sf-q', 'sf-market', 'sf-sector', 'sf-pct']) $(id).value = ''; $('sf-mcap').value = '0'; $('sf-vol').value = '0'; renderScreen(); });
+document.querySelector('#screen thead').addEventListener('click', (e) => {
+  const th = e.target.closest('th');
+  if (!th) return;
+  if (sortState.key === th.dataset.sort) sortState.dir *= -1;
+  else { sortState.key = th.dataset.sort; sortState.dir = ['symbol', 'name', 'market', 'sector'].includes(sortState.key) ? 1 : -1; }
+  renderScreen();
+});
+$('screen').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-code]'); if (tr) selectCode(tr.dataset.code, true); });
+$('treemap').addEventListener('click', (e) => { const c = e.target.closest('.tm-cell'); if (c) { $('map-tip').hidden = true; selectCode(uni[+c.dataset.i].code, true); } });
+$('treemap').addEventListener('mousemove', (e) => {
+  const c = e.target.closest('.tm-cell'), tip = $('map-tip');
+  if (!c) { tip.hidden = true; return; }
+  const x = uni[+c.dataset.i], us = x.currency === 'USD';
+  tip.innerHTML = `<div class="t">${esc(x.name)}</div><div class="m">${esc(x.symbol)} · ${esc(x.market)} · ${esc(x.industry || x.sector)}</div>` +
+    `<div><span class="${cls(x.chg)} b">${us ? '$' : ''}${fmt(x.price, us ? 2 : 0)} ${arrow(x.chg)} ${pct(x.pct)}</span></div><div class="m">시가총액 ${esc(x.mcapText)}${us ? ' 달러' : '원'} · 거래량 ${fmt(x.volume)}</div>`;
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.min(e.clientX + 14, window.innerWidth - r.width - 8) + 'px';
+  tip.style.top = Math.min(e.clientY + 14, window.innerHeight - r.height - 8) + 'px';
+});
+$('treemap').addEventListener('mouseleave', () => { $('map-tip').hidden = true; });
+let mapResize = null;
+window.addEventListener('resize', () => { clearTimeout(mapResize); mapResize = setTimeout(() => { if (currentView() === 'map' && mapMode === 'map') renderTreemap(); }, 150); });
 
 // ── 프로그램 잠금 (비밀번호)
 let auth = { hasPassword: false, locked: false };

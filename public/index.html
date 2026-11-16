@@ -37,6 +37,7 @@
         <button type="button" data-key="F2">[F2 MKT]</button>
         <button type="button" data-key="F3">[F3 SEC]</button>
         <button type="button" data-key="F4">[F4 MACRO]</button>
+        <button type="button" data-key="F6">[F6 MAP]</button>
         <button type="button" data-key="F8">[F8 PORT]</button>
       </div>
     </div>
@@ -48,6 +49,7 @@
     <a href="#stock" data-view="stock">2. 종목 심층 &amp; 공시 (Single Stock &amp; Disclosure)</a>
     <a href="#macro" data-view="macro">3. 거시경제 &amp; 채권/외환 (Macro, Rates &amp; FX)</a>
     <a href="#port" data-view="port">4. 포트폴리오 데스크 (Portfolio Desk)</a>
+    <a href="#map" data-view="map">5. 맵 &amp; 스크리너 (Map &amp; Screener)</a>
   </nav>
 </header>
 
@@ -148,9 +150,12 @@
               <button type="button" data-v="3Y">3년</button>
             </div>
             <div id="legend" class="legend"></div>
+            <div class="tabs" id="chart-mode"><button type="button" data-v="basic" class="on">기본 차트</button><button type="button" data-v="tv">TradingView</button></div>
           </div>
           <div id="readout" class="readout"></div>
-          <canvas id="chart" class="chart"></canvas>
+          <div id="chart" class="chart"></div>
+          <div id="tv" class="chart tv" hidden></div>
+          <p id="tv-note" class="hint tv-note" hidden></p>
         </section>
         <section class="win">
           <div class="win-h"><span class="win-t"><span class="icon">table_chart</span>연간 재무 요약</span><span class="win-tag" id="fin-unit">매출·이익 억원 · (E) 추정</span></div>
@@ -164,8 +169,9 @@
           <div id="ticks" class="mini"></div>
         </section>
         <section class="win">
-          <div class="win-h"><span class="win-t"><span class="icon">swap_vert</span>투자자별 순매수 (주)</span><span class="win-tag">FLOW</span></div>
-          <div class="table-wrap">
+          <div class="win-h"><span class="win-t"><span class="icon">swap_vert</span><span id="flows-title">투자자별 순매수 (주)</span></span><span class="win-tag">FLOW</span></div>
+          <div id="own" class="own" hidden></div>
+          <div class="table-wrap" id="flows-wrap">
             <table id="flows" class="grid-table">
               <thead><tr><th>일자</th><th>종가</th><th>외국인</th><th>기관</th><th>개인</th><th>외인보유</th></tr></thead>
               <tbody></tbody>
@@ -192,7 +198,7 @@
         <section class="win">
           <div class="win-h"><span class="win-t"><span class="icon">show_chart</span><span id="macro-title">추이</span></span><span class="win-tag accent">최근 120영업일</span></div>
           <div id="macro-readout" class="readout"></div>
-          <canvas id="macro-chart" class="chart small"></canvas>
+          <div id="macro-chart" class="chart small"></div>
         </section>
         <section class="win">
           <div class="win-h"><span class="win-t"><span class="icon">public</span>해외 주요 지수</span><span class="win-tag">WORLD</span></div>
@@ -240,7 +246,51 @@
     </div>
   </section>
 
-  <p class="note">데이터: 네이버페이 증권, Yahoo Finance (키 입력 시 DART, 토스증권, 한국투자증권) · 지연될 수 있으며 투자 권유가 아닙니다.</p>
+  <!-- ───── 5. 맵 & 스크리너 ───── -->
+  <section id="view-map" class="view" hidden>
+    <div class="map-bar">
+      <div class="tabs region" id="map-region">
+        <button type="button" data-v="KR">국내</button>
+        <button type="button" data-v="US">미국</button>
+      </div>
+      <div class="tabs region" id="map-mode">
+        <button type="button" data-v="map" class="on">맵</button>
+        <button type="button" data-v="screen">스크리너</button>
+      </div>
+      <span id="map-info" class="win-tag"></span>
+      <div id="map-legend" class="map-legend"></div>
+    </div>
+    <div id="map-wrap" class="win"><div id="treemap" class="treemap"></div></div>
+    <div id="screen-wrap" class="win" hidden>
+      <div class="filters">
+        <input id="sf-q" type="text" placeholder="종목명 · 코드" autocomplete="off" aria-label="종목명 또는 코드">
+        <select id="sf-market" aria-label="시장"></select>
+        <select id="sf-sector" aria-label="업종"></select>
+        <select id="sf-mcap" aria-label="시가총액"></select>
+        <select id="sf-pct" aria-label="등락률">
+          <option value="">등락률 전체</option><option value="u3">+3% 이상</option><option value="u0">상승 (0% 초과)</option>
+          <option value="d0">하락 (0% 미만)</option><option value="d3">-3% 이하</option>
+        </select>
+        <select id="sf-vol" aria-label="거래량">
+          <option value="0">거래량 전체</option><option value="1000000">100만 주 이상</option><option value="10000000">1,000만 주 이상</option>
+        </select>
+        <button type="button" id="sf-reset">초기화</button>
+        <span id="sf-count" class="win-tag"></span>
+      </div>
+      <div class="table-wrap screen-table">
+        <table id="screen" class="grid-table">
+          <thead><tr>
+            <th data-sort="symbol">코드</th><th data-sort="name">종목명</th><th data-sort="market">시장</th><th data-sort="sector">업종</th>
+            <th data-sort="price">현재가</th><th data-sort="chg">전일대비</th><th data-sort="pct">등락률</th><th data-sort="volume">거래량</th><th data-sort="mcap">시가총액</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="map-tip" class="map-tip" hidden></div>
+  </section>
+
+  <p class="note">데이터: 네이버페이 증권, Yahoo Finance (키 입력 시 DART, 토스증권, 한국투자증권) · 지연될 수 있으며 투자 권유가 아닙니다. 차트: <a class="link" href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView</a> Lightweight Charts.</p>
 </main>
 
 <footer class="tape">
@@ -316,6 +366,7 @@
   </form>
 </div>
 
+<script src="lwc.js"></script>
 <script src="chart.js"></script>
 <script src="app.js"></script>
 </body>

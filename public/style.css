@@ -307,3 +307,40 @@ a.toast:hover { background: var(--s-highest); }
 button.tile { text-align: left; }
 button.rank-row { width: 100%; text-align: left; }
 button.rank-row:hover { background: var(--s-high); }
+
+/* ── 차트 모드, TradingView */
+.chart.tv { height: 560px; }
+.chart.tv iframe { width: 100%; height: 100%; border: 0; display: block; }
+.tv-note { padding: 4px 8px 6px; }
+
+/* ── 미국 종목 수급 안내 */
+.own { padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.own-note { margin: 0; color: var(--on-var); font: 400 11px/16px var(--sans); }
+
+/* ── 맵 & 스크리너 */
+.map-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.map-legend { margin-left: auto; display: flex; gap: 2px; font: 600 9px/16px var(--mono); }
+.map-legend span { min-width: 34px; text-align: center; border-radius: 3px; color: #fff; padding: 0 4px; }
+.treemap { position: relative; width: 100%; overflow: hidden; background: var(--s-lowest); }
+.tm-sector { position: absolute; overflow: hidden; }
+.tm-label { position: absolute; left: 0; right: 0; top: 0; height: 15px; padding: 0 4px; font: 700 9px/15px var(--mono); letter-spacing: .04em; color: var(--on-var); background: var(--s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tm-cell { position: absolute; border: 1px solid var(--s-lowest); display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; color: #fff; padding: 0; font-family: var(--sans); line-height: 1.15; text-align: center; }
+.tm-cell:hover, .tm-cell:focus-visible { outline: 2px solid var(--tertiary); outline-offset: -2px; z-index: 2; }
+.tm-cell b { font-weight: 700; white-space: nowrap; max-width: 100%; overflow: hidden; }
+.tm-cell i { font: 600 .72em/1.2 var(--mono); font-style: normal; opacity: .95; }
+.map-tip { position: fixed; z-index: 80; pointer-events: none; background: var(--s-highest); border-radius: 6px; padding: 8px 10px; box-shadow: 0 10px 32px rgba(0,0,0,.6); font: 500 11px/16px var(--sans); max-width: 280px; }
+.map-tip .t { font: 700 13px/18px var(--head); }
+.map-tip .m { color: var(--on-var); font: 500 10px/14px var(--mono); }
+.filters { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px; background: var(--s); }
+.filters input, .filters select { background: var(--s-low); color: var(--on); border: 0; border-radius: 4px; padding: 5px 8px; font: 600 11px/16px var(--sans); min-width: 0; }
+.filters input { flex: 1 1 160px; max-width: 240px; font-family: var(--mono); }
+.filters button { padding: 5px 10px; border-radius: 4px; background: var(--s-high); font: 700 10px/16px var(--mono); }
+.filters button:hover { color: var(--tertiary); }
+.screen-table { max-height: calc(100vh - 220px); min-height: 320px; overflow: auto; }
+#screen thead th { position: sticky; top: 0; cursor: pointer; user-select: none; }
+#screen thead th:hover { color: var(--on); } #screen thead th.sorted { color: var(--tertiary); }
+#screen tbody tr { cursor: pointer; } #screen tbody tr:hover { background: var(--s-high); }
+#screen td:first-child { color: var(--tertiary); font-weight: 700; }
+#screen td:nth-child(-n+4), #screen th:nth-child(-n+4) { text-align: left; }
+#screen td:nth-child(2) { font: 700 11px/14px var(--sans); } #screen td:nth-child(4) { font-family: var(--sans); color: var(--on-var); }
+@media (max-width: 640px) { .chart.tv { height: 420px; } .map-legend { margin-left: 0; } }

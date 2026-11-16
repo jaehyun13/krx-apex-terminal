@@ -38,6 +38,11 @@ jobs:
             if (-not $u.name) { throw "미국 시세 API 응답이 비어 있습니다" }
             $icon = Invoke-WebRequest -Uri "http://127.0.0.1:3000/icon.svg" -UseBasicParsing
             if ($icon.StatusCode -ne 200) { throw "아이콘 파일이 내장되지 않았습니다" }
+            $lwc = Invoke-WebRequest -Uri "http://127.0.0.1:3000/lwc.js" -UseBasicParsing
+            if ($lwc.Content.Length -lt 100000) { throw "차트 엔진이 내장되지 않았습니다" }
+            $uni = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/universe?region=US"
+            Write-Host "미국 유니버스: $($uni.Count)종목"
+            if ($uni.Count -lt 100) { throw "맵·스크리너용 종목 목록이 비어 있습니다" }
           } finally {
             Stop-Process -Id $p.Id -Force
           }
@@ -52,5 +57,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v1.1.${{ github.run_number }}"
+          $tag = "v1.2.${{ github.run_number }}"
           gh release create $tag dist/KRX-APEX.exe --target ${{ github.sha }} --title "KRX::APEX $tag" --notes "Windows 실행 파일입니다. KRX-APEX.exe를 내려받아 더블클릭하면 터미널 창이 열립니다. API 키는 프로그램 안에서 F9로 입력합니다."

@@ -20,7 +20,7 @@ async function main() {
   run(bin('esbuild'), ['server.js', '--bundle', '--platform=node', '--format=cjs', '--outfile=build/app.cjs', '--log-level=warning']);
 
   console.log('2/4 실행 파일용 blob 만들기');
-  const assets = Object.fromEntries(['index.html', 'style.css', 'app.js', 'chart.js', 'icon.svg'].map((f) => [f, path.join('public', f)]));
+  const assets = Object.fromEntries(['index.html', 'style.css', 'app.js', 'chart.js', 'lwc.js', 'icon.svg'].map((f) => [f, path.join('public', f)]));
   fs.writeFileSync(path.join(BUILD, 'sea-config.json'), JSON.stringify({
     main: 'build/app.cjs', output: 'build/sea.blob', disableExperimentalSEAWarning: true,
     useCodeCache: false, useSnapshot: false, assets,

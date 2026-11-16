@@ -471,6 +471,50 @@ async function macroChart(category, code) {
     .filter((x) => x[1] != null).reverse();
 }
 
+// ───────────────────────── 맵·스크리너용 종목 유니버스 (시가총액 상위 종목 + 업종)
+// 미국: NASDAQ·NYSE 시총 상위 각 200종목, 국내: KOSPI 상위 200 + KOSDAQ 상위 100
+const TRBC_SECTOR = { 50: '에너지', 51: '소재', 52: '산업재', 53: '경기소비재', 54: '필수소비재', 55: '금융', 56: '헬스케어', 57: '기술', 59: '유틸리티', 60: '부동산' };
+
+// 국내 종목코드 → 업종명. 업종별 구성 종목을 한 번 훑어 만들고 12시간 캐시한다.
+let krSector = null;
+async function krSectorMap() {
+  if (krSector && Date.now() - krSector.at < 12 * 3600e3) return krSector.map;
+  const groups = (await getJson(`${M}/api/stocks/industry?page=1&pageSize=100`)).groups || [];
+  const map = {};
+  for (let i = 0; i < groups.length; i += 10) {
+    const lists = await settled(groups.slice(i, i + 10).map((g) => getJson(`${M}/api/stocks/industry/${g.no}?page=1&pageSize=100`)));
+    lists.forEach((d, j) => { for (const s of (d && d.stocks) || []) map[s.itemCode] = groups[i + j].name; });
+  }
+  if (Object.keys(map).length) krSector = { at: Date.now(), map };
+  return map;
+}
+
+async function universe(region) {
+  if (region === 'US') {
+    const pages = await settled([['NASDAQ', 1], ['NASDAQ', 2], ['NYSE', 1], ['NYSE', 2]].map(([m, p]) =>
+      getJson(`${API}/stock/exchange/${m}/marketValue?page=${p}&pageSize=100`).then((d) => (d.stocks || []).map((x) => ({ x, m })))));
+    return pages.flatMap((p) => p || []).filter(({ x }) => x.stockEndType === 'stock' && num(x.marketValueRaw) > 0).map(({ x, m }) => ({
+      code: x.reutersCode, symbol: x.symbolCode, name: x.stockName, market: m, currency: 'USD',
+      sector: TRBC_SECTOR[String(x.reutersIndustryCode || '').slice(0, 2)] || '기타',
+      industry: (x.industryCodeType && x.industryCodeType.industryGroupKor) || '',
+      ...priceFields(x), volume: num(x.accumulatedTradingVolume) || 0,
+      mcap: num(x.marketValueRaw), mcapText: (x.marketValueHangeul || '').replace(' USD', ''),
+    }));
+  }
+  const [sectorOf, ...pages] = await settled([
+    krSectorMap(),
+    ...[['KOSPI', 1], ['KOSPI', 2], ['KOSDAQ', 1]].map(([m, p]) =>
+      getJson(`${M}/api/stocks/marketValue/${m}?page=${p}&pageSize=100`).then((d) => (d.stocks || []).map((x) => ({ x, m })))),
+  ]);
+  return pages.flatMap((p) => p || []).filter(({ x }) => x.stockEndType === 'stock' && num(x.marketValueRaw) > 0).map(({ x, m }) => ({
+    code: x.itemCode, symbol: x.itemCode, name: x.stockName, market: m, currency: 'KRW',
+    sector: (sectorOf && sectorOf[x.itemCode]) || '기타', industry: '',
+    ...priceFields(x), volume: num(x.accumulatedTradingVolume) || 0,
+    mcap: num(x.marketValueRaw), mcapText: (x.marketValueHangeul || '').replace(/원$/, ''),
+  }));
+}
+
 module.exports = {
+  universe,
   overview, usOverview, rank, quote, chart, news, search, sectors, orderbook, disclosures, financials, quotes, macro, macroChart, INDEX_CODES, isUS, ticker,
 };
