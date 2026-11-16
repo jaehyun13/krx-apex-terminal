@@ -300,3 +300,10 @@ a.toast:hover { background: var(--s-highest); }
 .lock-box button { padding: 8px 10px; border-radius: 4px; background: var(--tertiary-c); color: var(--on-tertiary-c); font: 700 12px/16px var(--mono); }
 .lock-box button:hover { filter: brightness(1.15); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+/* ── 국내/미국 시장 전환 */
+.tabs.region button { padding: 5px 12px; font-size: 11px; background: var(--s-low); }
+.tabs.region button.on { background: var(--s-highest); }
+button.tile { text-align: left; }
+button.rank-row { width: 100%; text-align: left; }
+button.rank-row:hover { background: var(--s-high); }

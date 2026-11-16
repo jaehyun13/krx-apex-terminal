@@ -56,14 +56,18 @@
 
   <!-- ───── 1. 마켓 종합 ───── -->
   <section id="view-market" class="view">
+    <div class="tabs region" id="region">
+      <button type="button" data-v="KR" class="on">국내 시장 (KRX)</button>
+      <button type="button" data-v="US">미국 시장 (NASDAQ · NYSE)</button>
+    </div>
     <div id="cards" class="cards"></div>
     <div class="cockpit">
       <div class="col">
         <section class="win">
-          <div class="win-h"><span class="win-t"><span class="icon">grid_view</span>주요 업종 매트릭스</span><span class="win-tag">KRX_W1</span></div>
+          <div class="win-h"><span class="win-t"><span class="icon">grid_view</span><span id="tiles-title">주요 업종 매트릭스</span></span><span class="win-tag" id="tiles-tag">KRX_W1</span></div>
           <div id="tiles" class="tiles"></div>
           <div class="list">
-            <div class="list-h"><span>업종 등락률 랭킹</span><span>등락률</span></div>
+            <div class="list-h"><span id="list-title">업종 등락률 랭킹</span><span>등락률</span></div>
             <div id="sector-rank"></div>
           </div>
         </section>
@@ -79,10 +83,10 @@
             <button type="button" data-v="quantTop">거래량 상위</button>
           </div>
           <div class="tabs" id="rank-market">
-            <button type="button" data-v="KOSPI" class="on">KOSPI</button>
-            <button type="button" data-v="KOSDAQ">KOSDAQ</button>
-            <button type="button" data-v="NASDAQ">NASDAQ</button>
-            <button type="button" data-v="NYSE">NYSE</button>
+            <button type="button" data-v="KOSPI" data-region="KR" class="on">KOSPI</button>
+            <button type="button" data-v="KOSDAQ" data-region="KR">KOSDAQ</button>
+            <button type="button" data-v="NASDAQ" data-region="US">NASDAQ</button>
+            <button type="button" data-v="NYSE" data-region="US">NYSE</button>
           </div>
         </div>
         <div class="table-wrap">

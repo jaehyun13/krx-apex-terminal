@@ -357,7 +357,45 @@ async function usRank(type, market, size) {
   return (d.stocks || []).map((x) => ({
     code: x.reutersCode, symbol: x.symbolCode, name: x.stockName, currency: 'USD', ...priceFields(x),
     volume: num(x.accumulatedTradingVolume), value: x.accumulatedTradingValue || null, mcap: x.marketValueHangeul || null,
+    mcapRaw: num(x.marketValueRaw) || 0,
   }));
+}
+
+// ── 미국 시장 개요: 주요 지수(+당일 스파크라인), 금리·달러·원자재, 시가총액 상위 종목
+const US_CARDS = ['.IXIC', '.INX', '.DJI'];           // 스파크라인을 그리는 지수
+const US_SIDE = ['.NDX', '.SOX', '.VIX', '.DJT'];     // 보조 지수
+async function usOverview() {
+  const [list, sparks, majors, nq, ny] = await settled([
+    getJson(`${API}/index/nation/USA`),
+    settled(US_CARDS.map((c) => usChart(c, '1D'))),
+    getJson(`${M}/front-api/marketIndex/majors`),
+    usRank('marketValue', 'NASDAQ', 14),
+    usRank('marketValue', 'NYSE', 14),
+  ]);
+  const byCode = Object.fromEntries((list || []).map((x) => [x.reutersCode, x]));
+  const index = (code) => {
+    const x = byCode[code];
+    if (!x) return null;
+    const sp = (sparks || [])[US_CARDS.indexOf(code)];
+    return {
+      code, name: x.indexName, ...priceFields(x),
+      open: num(x.openPrice), high: num(x.highPrice), low: num(x.lowPrice),
+      tradedAt: x.localTradedAt || null, status: x.marketStatus || null,
+      prevClose: sp ? sp.prevClose : null,
+      spark: sp ? sp.bars.filter((_, i, a) => i % 5 === 0 || i === a.length - 1).map((b) => b[1]) : [],
+    };
+  };
+  const r = (majors && majors.result) || {};
+  const pick = (group, code) => { const x = (r[group] || []).find((i) => i.reutersCode === code); return x ? macroItem(x, group) : null; };
+  const indices = US_CARDS.map(index).filter(Boolean);
+  return {
+    ts: Date.now(),
+    status: (indices[0] && indices[0].status) || null,
+    indices, side: US_SIDE.map(index).filter(Boolean),
+    macro: [pick('bond', 'US10YT=RR'), pick('exchange', '.DXY'), pick('exchange', 'FX_USDKRW'), pick('energy', 'CLcv1'), pick('metals', 'GCcv1')].filter(Boolean),
+    // 두 거래소를 합쳐 시가총액 순으로
+    leaders: [...(nq || []), ...(ny || [])].sort((a, b) => b.mcapRaw - a.mcapRaw).slice(0, 14),
+  };
 }
 
 // 미국 종목 뉴스(국문 번역 기사). 기사별 주소가 없어 종목 페이지로 연결한다.
@@ -434,5 +472,5 @@ async function macroChart(category, code) {
 }
 
 module.exports = {
-  overview, rank, quote, chart, news, search, sectors, orderbook, disclosures, financials, quotes, macro, macroChart, INDEX_CODES, isUS, ticker,
+  overview, usOverview, rank, quote, chart, news, search, sectors, orderbook, disclosures, financials, quotes, macro, macroChart, INDEX_CODES, isUS, ticker,
 };

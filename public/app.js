@@ -11,6 +11,7 @@ const state = {
   range: load('range') || '3M',
   rankType: 'marketValue',
   rankMarket: 'KOSPI',
+  region: load('region') === 'US' ? 'US' : 'KR', // 마켓 종합 화면이 보여주는 시장
   daily: null,      // { code, bars } 일봉 원본(이평 포함)
   intraday: null,   // { code, bars, prevClose }
   quote: null,
@@ -159,6 +160,63 @@ function renderSectors(list) {
   $('sector-rank').innerHTML = list.slice(0, 4).map(row).join('') + list.slice(-4).map((s, i) => row(s, n - 4 + i)).join('');
 }
 
+// ── 미국 시장 개요 (마켓 종합 화면의 미국 모드)
+function renderUsOverview(o) {
+  sparkSeq = 0;
+  const time = (i) => (i.tradedAt ? `${i.tradedAt.slice(11, 19)} ET` : '');
+  const html = o.indices.map((i) => `<button type="button" class="card" data-code="${esc(i.code)}">` +
+    `<div class="card-h"><span class="card-n">${esc(i.name)}<span class="badge ${cls(i.chg)}">${esc(i.code.slice(1))}</span></span><span class="card-time">${time(i)}</span></div>` +
+    `<div class="card-mid"><div><div class="card-px ${cls(i.chg)}">${fmt(i.price, 2)}</div><div class="card-chg ${cls(i.chg)}">${chgHtml(i)}</div></div>${sparkSvg(i.spark, i.prevClose, i.chg)}</div>` +
+    `<div class="kv">${kv('시가', fmt(i.open, 2))}${kv('고가', fmt(i.high, 2), 'up')}${kv('저가', fmt(i.low, 2), 'dn')}</div></button>`);
+  const rows = (list, price) => list.map((x) => kv(x.name, `${price(x)} <span class="${cls(x.chg)}">(${pct(x.pct)})</span>`)).join('');
+  html.push(`<div class="card"><div class="card-h"><span class="card-n">주요 지수</span><span class="card-time accent">${o.status === 'OPEN' ? '정규장 개장' : '정규장 마감'}</span></div>` +
+    `<div class="kv">${rows(o.side, (x) => fmt(x.price, 2))}</div></div>`);
+  html.push(`<div class="card"><div class="card-h"><span class="card-n">금리 · 달러 · 원자재</span><span class="card-time accent">MACRO</span></div>` +
+    `<div class="kv">${rows(o.macro, (x) => esc(x.priceText))}</div></div>`);
+  $('cards').innerHTML = html.join('');
+
+  // 왼쪽: 시가총액 상위 종목
+  const tile = (s) => `<button type="button" class="tile ${cls(s.pct)}" data-code="${esc(s.code)}"><div class="tile-h"><span class="tile-n" title="${esc(s.name)}">${esc(s.name)}</span>` +
+    `<span class="tile-p ${cls(s.pct)}">${arrow(s.pct)} ${pct(s.pct)}</span></div>` +
+    `<div class="tile-s"><span>${esc(s.symbol)} · $${fmt(s.price, 2)}</span><span>${esc((s.mcap || '').replace(' USD', ''))}</span></div></button>`;
+  $('tiles').innerHTML = o.leaders.slice(0, 6).map(tile).join('');
+  $('sector-rank').innerHTML = o.leaders.slice(6).map((s, i) => `<button type="button" class="rank-row" data-code="${esc(s.code)}"><span><span class="no">${String(i + 7).padStart(2, '0')}</span>${esc(s.name)}</span>` +
+    `<span class="${cls(s.pct)}">${pct(s.pct)} ${arrow(s.pct)}</span></button>`).join('');
+}
+async function loadUsOverview() {
+  try { const o = await api('usoverview'); if (state.region === 'US') renderUsOverview(o); }
+  catch (e) { if (state.region === 'US') $('cards').innerHTML = `<div class="empty">미국 시장 정보를 불러오지 못했습니다 (${esc(e.message)})</div>`; }
+}
+
+// 시장 전환: 카드·왼쪽 패널·순위 탭·뉴스를 해당 시장으로 바꾼다.
+function applyRegion() {
+  const isUs = state.region === 'US';
+  document.querySelectorAll('#region button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.region));
+  document.querySelectorAll('#rank-market button').forEach((b) => { b.hidden = b.dataset.region !== state.region; });
+  if (US_MARKETS.includes(state.rankMarket) !== isUs) {
+    state.rankMarket = isUs ? 'NASDAQ' : 'KOSPI';
+    document.querySelectorAll('#rank-market button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.rankMarket));
+  }
+  syncRankTabs();
+  $('program').hidden = isUs;
+  $('tiles-title').textContent = isUs ? '시가총액 상위 종목' : '주요 업종 매트릭스';
+  $('tiles-tag').textContent = isUs ? 'US_W1' : 'KRX_W1';
+  $('list-title').textContent = isUs ? '시가총액 7~14위' : '업종 등락률 랭킹';
+  document.querySelector('#wire-tabs [data-v="filings"]').hidden = isUs;
+  if (isUs && !$('filings').hidden) document.querySelector('#wire-tabs [data-v="news"]').click();
+}
+$('region').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || b.dataset.v === state.region) return;
+  state.region = b.dataset.v; save('region', state.region);
+  seen.news = null; // 뉴스 출처가 바뀌므로 알림 기준을 새로 잡는다
+  $('cards').innerHTML = ''; $('tiles').innerHTML = ''; $('sector-rank').innerHTML = '';
+  applyRegion();
+  if (state.region === 'KR') api('overview').then((o) => { renderCards(o); renderProgram(o); }).catch(() => {});
+  loadView('market');
+});
+for (const id of ['tiles', 'sector-rank']) $(id).addEventListener('click', (e) => { const b = e.target.closest('[data-code]'); if (b) selectCode(b.dataset.code, true); });
+
 // ── 순위 표
 function renderRank(list) {
   const badge = { KOSPI: 'KS', KOSDAQ: 'KQ', NASDAQ: 'NQ', NYSE: 'NY' }[state.rankMarket];
@@ -168,7 +226,7 @@ function renderRank(list) {
     return `<tr data-code="${esc(r.code)}" class="${r.code === state.code ? 'sel' : ''}">` +
       `<td>${esc(r.symbol || r.code)}</td><td class="nm">${esc(r.name)}<span class="badge">${badge}</span></td>` +
       `<td class="${c} b">${us ? '$' : ''}${fmt(r.price, dp)}</td><td class="${c}">${arrow(r.chg)} ${signed(r.chg, dp)}</td><td class="${c} b">${pct(r.pct)}</td>` +
-      `<td>${fmt(r.volume)}</td><td class="accent b">${esc((r.value || '−').replace(/원$/, ''))}</td><td>${esc((r.mcap || '−').replace(/원$/, ''))}</td></tr>`;
+      `<td>${fmt(r.volume)}</td><td class="accent b">${esc((r.value || '−').replace(/원$| USD$/, ''))}</td><td>${esc((r.mcap || '−').replace(/원$| USD$/, ''))}</td></tr>`;
   }).join('');
 }
 async function loadRank() {
@@ -351,7 +409,7 @@ async function selectCode(code, open = false) {
 // ── 주기 갱신
 async function refresh() {
   const results = await Promise.allSettled([
-    api('overview').then((o) => { const u = o.fx.find((f) => f.code === 'FX_USDKRW'); if (u) state.usdkrw = u.price; renderHeader(o); renderCards(o); renderTape(o); renderProgram(o); }),
+    api('overview').then((o) => { const u = o.fx.find((f) => f.code === 'FX_USDKRW'); if (u) state.usdkrw = u.price; renderHeader(o); renderTape(o); if (state.region === 'KR') { renderCards(o); renderProgram(o); } }),
     loadQuote(),
     loadView(currentView(), true),
   ]);
@@ -361,8 +419,8 @@ async function refresh() {
 // 화면별로 필요한 데이터만 받는다.
 function loadView(v, periodic = false) {
   if (v === 'market') {
-    return Promise.allSettled([loadRank(), api('sectors').then(renderSectors),
-      pollWire()]);
+    if (state.region === 'US') return Promise.allSettled([loadRank(), loadUsOverview(), pollWire()]);
+    return Promise.allSettled([loadRank(), api('sectors').then((x) => state.region === 'KR' && renderSectors(x)), pollWire()]);
   }
   if (v === 'stock') {
     if (periodic && state.quote && state.quote.status === 'OPEN') loadChart(true);
@@ -489,7 +547,8 @@ function notifyNew(kind, list) {
 }
 
 async function pollWire() {
-  const [news] = await Promise.allSettled([api('news'), loadFilings()]);
+  // 미국 시장을 보고 있으면 미국 증시 뉴스를 받는다
+  const [news] = await Promise.allSettled([api(state.region === 'US' ? 'news?code=.IXIC' : 'news'), loadFilings()]);
   if (news.status === 'fulfilled') { renderWire($('market-news'), news.value); notifyNew('news', news.value); }
 }
 
@@ -959,7 +1018,7 @@ function tick() { $('clock').textContent = `SEOUL ${kstTime(Date.now())} KST`; }
 tick(); setInterval(tick, 1000);
 function boot() {
   document.querySelectorAll('#range button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.range));
-  syncRankTabs();
+  applyRegion();
   applyView();
   selectCode(state.code).then((ok) => { if (!ok) selectCode('005930'); });
   refresh();

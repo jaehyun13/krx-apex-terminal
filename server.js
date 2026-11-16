@@ -28,6 +28,7 @@ function readPublic(name) {
 // 경로별 핸들러와 캐시 유지 시간(ms)
 const ROUTES = {
   overview: { ttl: 10e3, run: () => data.overview() },
+  usoverview: { ttl: 15e3, run: () => data.usOverview() },
   rank: { ttl: 10e3, run: (q) => data.rank(q.get('type') || undefined, q.get('market') || undefined) },
   quote: { ttl: 5e3, run: (q) => data.quote(code(q)) },
   quotes: { ttl: 5e3, run: (q) => data.quotes(codes(q)) },
