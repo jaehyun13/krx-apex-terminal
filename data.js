@@ -145,11 +145,12 @@ async function overview() {
 // ── 순위: type = marketValue | up | down | quantTop(거래량), market = KOSPI | KOSDAQ
 const RANK_TYPES = ['marketValue', 'up', 'down', 'quantTop'];
 async function rank(type = 'marketValue', market = 'KOSPI', size = 30) {
+  if (US_EXCHANGES.includes(market)) return usRank(type, market, size);
   if (!RANK_TYPES.includes(type)) throw new Error('bad type');
   if (market !== 'KOSPI' && market !== 'KOSDAQ') throw new Error('bad market');
   const d = await getJson(`${M}/api/stocks/${type}/${market}?page=1&pageSize=${size}`);
   return (d.stocks || []).map((s) => ({
-    code: s.itemCode, name: s.stockName, ...priceFields(s),
+    code: s.itemCode, symbol: s.itemCode, name: s.stockName, currency: 'KRW', ...priceFields(s),
     volume: num(s.accumulatedTradingVolume),
     value: s.accumulatedTradingValueKrwHangeul || null,
     mcap: s.marketValueHangeul || null,
@@ -158,10 +159,11 @@ async function rank(type = 'marketValue', market = 'KOSPI', size = 30) {
 
 // ── 종목/지수 상세
 async function quote(code) {
+  if (isUS(code)) return usQuote(code);
   const base = isIndex(code) ? `${M}/api/index/${code}` : `${M}/api/stock/${encodeURIComponent(code)}`;
   const [b, g] = await Promise.all([getJson(`${base}/basic`), getJson(`${base}/integration`)]);
   return {
-    code, name: b.stockName, isIndex: isIndex(code),
+    code, symbol: code, currency: 'KRW', name: b.stockName, isIndex: isIndex(code),
     market: (b.stockExchangeType && b.stockExchangeType.nameKor) || null,
     ...priceFields(b),
     status: b.marketStatus || null,
@@ -180,6 +182,7 @@ async function quote(code) {
 // range=D  → 3년치 일봉 [[yyyymmdd, 시, 고, 저, 종, 거래량], ...]
 // range=1D → 최근 거래일 분봉 [[hhmm, 종, 거래량], ...] + prevClose
 async function chart(code, range = 'D') {
+  if (isUS(code)) return usChart(code, range);
   const kind = isIndex(code) ? 'index' : 'item';
   const base = `${API}/chart/domestic/${kind}/${encodeURIComponent(code)}`;
   if (range === '1D') {
@@ -203,6 +206,7 @@ async function chart(code, range = 'D') {
 
 // ── 뉴스: 종목 코드가 있으면 종목 뉴스, 없거나 지수면 주요 뉴스
 async function news(code) {
+  if (code && isUS(code)) return usNews(code);
   if (code && !isIndex(code)) {
     const d = await getJson(`${M}/api/news/stock/${encodeURIComponent(code)}?pageSize=15&page=1`);
     return d.flatMap((g) => g.items || []).map((n) => ({
@@ -222,8 +226,11 @@ async function search(q) {
   q = String(q || '').trim();
   if (!q) return [];
   const d = await getJson(`https://ac.stock.naver.com/ac?q=${encodeURIComponent(q)}&target=stock`);
-  return (d.items || []).filter((i) => i.nationCode === 'KOR').slice(0, 10)
-    .map((i) => ({ code: i.code, name: i.name, market: i.typeName }));
+  // 국내는 6자리 코드, 미국은 로이터 코드(AAPL.O)를 내부 코드로 쓰고 화면에는 티커(symbol)를 보여준다.
+  return (d.items || []).filter((i) => i.nationCode === 'KOR' || i.nationCode === 'USA').slice(0, 10)
+    .map((i) => (i.nationCode === 'USA'
+      ? { code: i.reutersCode, symbol: i.code, name: i.name, market: i.typeCode }
+      : { code: i.code, symbol: i.code, name: i.name, market: i.typeName }));
 }
 
 // ── 업종별 등락률
@@ -237,7 +244,7 @@ async function sectors() {
 
 // ── 호가 (5단계). 지수는 호가가 없으므로 null
 async function orderbook(code) {
-  if (isIndex(code)) return null;
+  if (isIndex(code) || isUS(code)) return null; // 미국 호가는 토스증권 키가 있을 때만 제공
   const d = await getJson(`${M}/api/stock/${encodeURIComponent(code)}/askingPrice`);
   const lv = (x) => ({ price: num(x.price), count: num(x.count), rate: num(x.rate) || 0 });
   return {
@@ -250,7 +257,7 @@ async function orderbook(code) {
 
 // ── 공시
 async function disclosures(code) {
-  if (isIndex(code)) return [];
+  if (isIndex(code) || isUS(code)) return [];
   const d = await getJson(`${M}/api/stock/${encodeURIComponent(code)}/disclosure?page=1&pageSize=20`);
   return d.map((x) => ({
     title: decodeEntities(x.title), office: x.author || '공시',
@@ -262,6 +269,8 @@ async function disclosures(code) {
 // ── 연간 재무 요약 (매출·이익은 억원)
 const FIN_ROWS = ['매출액', '영업이익', '당기순이익', '영업이익률', '순이익률', 'ROE', '부채비율', 'EPS', 'PER', 'BPS', 'PBR', '주당배당금'];
 async function financials(code) {
+  if (isUSIndex(code)) return null;
+  if (isUS(code)) return usFinancials(code);
   if (isIndex(code)) return null;
   const d = await getJson(`${M}/api/stock/${encodeURIComponent(code)}/finance/annual`);
   const f = d.financeInfo;
@@ -275,9 +284,99 @@ async function financials(code) {
 
 // ── 여러 종목 현재가 (포트폴리오용)
 async function quotes(codes) {
-  if (!codes.length) return [];
-  const d = await getJson(`${POLL}/stock/${codes.map(encodeURIComponent).join(',')}`);
-  return (d.datas || []).map((x) => ({ code: x.itemCode, name: x.stockName, ...priceFields(x) }));
+  const kr = codes.filter((c) => !isUS(c)), us = codes.filter(isUS);
+  const [k, u] = await settled([
+    kr.length ? getJson(`${POLL}/stock/${kr.map(encodeURIComponent).join(',')}`) : null,
+    us.length ? getJson(`https://polling.finance.naver.com/api/realtime/worldstock/stock/${us.map(encodeURIComponent).join(',')}`) : null,
+  ]);
+  return [
+    ...((k && k.datas) || []).map((x) => ({ code: x.itemCode, symbol: x.itemCode, name: x.stockName, currency: 'KRW', ...priceFields(x) })),
+    ...((u && u.datas) || []).map((x) => ({ code: x.reutersCode, symbol: x.symbolCode, name: x.stockName, currency: 'USD', ...priceFields(x) })),
+  ];
+}
+
+// ───────────────────────── 미국 주식 (코드: 로이터 코드. 종목 AAPL.O / 지수 .IXIC)
+const US_EXCHANGES = ['NASDAQ', 'NYSE'];
+const isUS = (code) => String(code).includes('.');
+const isUSIndex = (code) => String(code).startsWith('.');
+const YAHOO_INDEX = { '.INX': '^GSPC', '.SSEC': '000001.SS' };
+// 로이터 코드 → 티커. 끝의 소문자는 주식 클래스(BRKb.N → BRK-B)
+function ticker(code) {
+  if (isUSIndex(code)) return YAHOO_INDEX[code] || '^' + code.slice(1);
+  return String(code).split('.')[0].replace(/([a-z])$/, (m, c) => '-' + c.toUpperCase());
+}
+const usBase = (code) => `${API}/${isUSIndex(code) ? 'index' : 'stock'}/${encodeURIComponent(code)}`;
+
+async function usQuote(code) {
+  const b = await getJson(`${usBase(code)}/basic`);
+  const o = b.overMarketPriceInfo;
+  return {
+    code, symbol: b.symbolCode || code, name: b.stockName || b.indexName, isIndex: isUSIndex(code),
+    market: b.stockExchangeName || b.nationName || '미국', currency: 'USD',
+    ...priceFields(b),
+    status: b.marketStatus || null,
+    tradedAt: b.localTradedAt || null,
+    // 프리마켓·애프터마켓 시세
+    extended: o && o.overPrice ? {
+      session: o.tradingSessionType === 'PRE_MARKET' ? '프리마켓' : '애프터마켓', price: num(o.overPrice),
+      chg: Math.abs(num(o.compareToPreviousClosePrice) || 0) * direction(o.compareToPreviousPrice),
+      pct: Math.abs(num(o.fluctuationsRatio) || 0) * direction(o.compareToPreviousPrice),
+    } : null,
+    infos: (b.stockItemTotalInfos || []).filter((i) => i.value && i.value !== 'N/A')
+      .map((i) => ({ code: i.code, key: i.key, value: i.value, desc: i.valueDesc || null })),
+    flows: [],
+  };
+}
+
+// 일봉은 네이버, 당일 분봉은 Yahoo(현지 시각 기준)에서 받는다.
+async function usChart(code, range) {
+  if (range === '1D') {
+    const d = await getJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker(code))}?range=1d&interval=1m`);
+    const r = d.chart && d.chart.result && d.chart.result[0];
+    if (!r || !r.timestamp) return { range, date: null, prevClose: null, bars: [] };
+    const q = r.indicators.quote[0], off = r.meta.gmtoffset || 0;
+    const bars = [];
+    r.timestamp.forEach((t, i) => {
+      if (q.close[i] == null) return;
+      const hhmm = new Date((t + off) * 1000).toISOString().slice(11, 16).replace(':', '');
+      bars.push([hhmm, Math.round(q.close[i] * 100) / 100, q.volume[i] || 0]);
+    });
+    return {
+      range, date: new Date((r.timestamp[0] + off) * 1000).toISOString().slice(0, 10).replace(/-/g, ''),
+      prevClose: r.meta.chartPreviousClose ?? r.meta.previousClose ?? null, bars,
+    };
+  }
+  const end = new Date(), start = new Date(end.getTime() - 3 * 366 * 86400e3);
+  const rows = await getJson(`${API}/chart/foreign/${isUSIndex(code) ? 'index' : 'item'}/${encodeURIComponent(code)}/day?startDateTime=${ymd(start)}&endDateTime=${ymd(end)}`);
+  return { range: 'D', bars: rows.map((r) => [Number(r.localDate), r.openPrice, r.highPrice, r.lowPrice, r.closePrice, r.accumulatedTradingVolume]) };
+}
+
+async function usRank(type, market, size) {
+  if (!['marketValue', 'up', 'down'].includes(type)) throw new Error('미국 시장은 시가총액·상승·하락 순위만 제공합니다');
+  const d = await getJson(`${API}/stock/exchange/${market}/${type}?page=1&pageSize=${size}`);
+  return (d.stocks || []).map((x) => ({
+    code: x.reutersCode, symbol: x.symbolCode, name: x.stockName, currency: 'USD', ...priceFields(x),
+    volume: num(x.accumulatedTradingVolume), value: x.accumulatedTradingValue || null, mcap: x.marketValueHangeul || null,
+  }));
+}
+
+// 미국 종목 뉴스(국문 번역 기사). 기사별 주소가 없어 종목 페이지로 연결한다.
+async function usNews(code) {
+  const d = await getJson(`${API}/news/worldStock/${encodeURIComponent(code)}?pageSize=15&page=1`);
+  return (d || []).map((x) => ({
+    title: decodeEntities(x.tit), office: x.ohnm, dt: String(x.dt || '').slice(0, 12),
+    url: `https://m.stock.naver.com/worldstock/${isUSIndex(code) ? 'index' : 'stock'}/${code}/total`,
+  }));
+}
+
+async function usFinancials(code) {
+  const f = await getJson(`${usBase(code)}/finance/annual`);
+  if (!f || !f.trTitleList || !f.rowList) return null;
+  const periods = f.trTitleList.map((t) => ({ key: t.key, title: String(t.title).slice(0, 7), estimate: t.isConsensus === 'Y' }));
+  const rows = f.rowList.slice(0, 12).map((r) => ({
+    title: r.title, values: periods.map((p) => (r.columns[p.key] && r.columns[p.key].value != null ? String(r.columns[p.key].value).replace(/\.00$/, '') : '-')),
+  }));
+  return { periods, rows, unit: f.unit || 'USD(백만)' };
 }
 
 // ── 거시: 환율·금리·원자재·운임 + 해외 지수
@@ -335,5 +434,5 @@ async function macroChart(category, code) {
 }
 
 module.exports = {
-  overview, rank, quote, chart, news, search, sectors, orderbook, disclosures, financials, quotes, macro, macroChart, INDEX_CODES,
+  overview, rank, quote, chart, news, search, sectors, orderbook, disclosures, financials, quotes, macro, macroChart, INDEX_CODES, isUS, ticker,
 };
