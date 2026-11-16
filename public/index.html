@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KRX::APEX TERMINAL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,500,0,0&display=block">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div class="brand-box">
+      <span class="brand">KRX::APEX</span>
+      <div class="chip status-chip">
+        <span id="status-dot" class="dot"></span>
+        <span id="status" class="status">KRX REGULAR: −</span>
+        <span class="sep">|</span>
+        <span id="clock">SEOUL −</span>
+        <span class="sep hide-sm">|</span>
+        <span id="feed" class="hide-sm">FEED −</span>
+      </div>
+    </div>
+    <div class="cmd-wrap">
+      <div class="cmd">
+        <span class="prompt">CMD&gt;</span>
+        <input id="cmd" type="text" autocomplete="off" spellcheck="false" placeholder="005930 &lt;GO&gt;  ·  삼성전자  ·  KOSPI  ·  1D 3M 1Y  ·  HELP">
+        <button id="go" class="go" type="button">GO</button>
+        <ul id="suggest" class="suggest" hidden></ul>
+      </div>
+      <div class="fkeys">
+        <button type="button" data-key="F1">[F1 HELP]</button>
+        <button type="button" data-key="F2">[F2 MKT]</button>
+        <button type="button" data-key="F3">[F3 SEC]</button>
+        <button type="button" data-key="F4">[F4 MACRO]</button>
+        <button type="button" data-key="F8">[F8 PORT]</button>
+      </div>
+    </div>
+    <button type="button" id="alert-btn" class="chip keys-btn"><span class="icon" id="alert-icon">notifications_active</span><span id="alert-state">속보 알림</span></button>
+    <button type="button" id="keys-btn" class="chip keys-btn"><span class="icon">key</span><span id="keys-state">API 키 설정 [F9]</span></button>
+  </div>
+  <nav class="nav" id="nav">
+    <a href="#market" data-view="market" class="on">1. 마켓 종합 모니터 (KRX Overview)</a>
+    <a href="#stock" data-view="stock">2. 종목 심층 &amp; 공시 (Single Stock &amp; Disclosure)</a>
+    <a href="#macro" data-view="macro">3. 거시경제 &amp; 채권/외환 (Macro, Rates &amp; FX)</a>
+    <a href="#port" data-view="port">4. 포트폴리오 데스크 (Portfolio Desk)</a>
+  </nav>
+</header>
+
+<main>
+  <div id="msg" class="msg" hidden></div>
+
+  <!-- ───── 1. 마켓 종합 ───── -->
+  <section id="view-market" class="view">
+    <div id="cards" class="cards"></div>
+    <div class="cockpit">
+      <div class="col">
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">grid_view</span>주요 업종 매트릭스</span><span class="win-tag">KRX_W1</span></div>
+          <div id="tiles" class="tiles"></div>
+          <div class="list">
+            <div class="list-h"><span>업종 등락률 랭킹</span><span>등락률</span></div>
+            <div id="sector-rank"></div>
+          </div>
+        </section>
+        <section class="win pad" id="program"></section>
+      </div>
+
+      <section class="win center">
+        <div class="win-h tall">
+          <div class="tabs" id="rank-type">
+            <button type="button" data-v="marketValue" class="on">시가총액 상위</button>
+            <button type="button" data-v="up">상승률 상위</button>
+            <button type="button" data-v="down">하락률 상위</button>
+            <button type="button" data-v="quantTop">거래량 상위</button>
+          </div>
+          <div class="tabs" id="rank-market">
+            <button type="button" data-v="KOSPI" class="on">KOSPI</button>
+            <button type="button" data-v="KOSDAQ">KOSDAQ</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="rank" class="grid-table">
+            <thead><tr><th>코드</th><th>종목명</th><th>현재가(KRW)</th><th>전일대비</th><th>등락률</th><th>거래량(주)</th><th>대금</th><th>시가총액</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="selbar">
+          <div id="sel" class="sel-info"></div>
+          <div class="sel-actions">
+            <button type="button" id="open-chart" class="btn-accent">차트 &lt;GO&gt;</button>
+            <button type="button" id="open-stock">HOGA 호가창 [F3]</button>
+            <button type="button" id="add-port">포트폴리오 담기</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="col">
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="dot live"></span><span id="mini-title">선택 종목 일별 수급</span></span><span class="win-tag accent">주</span></div>
+          <div id="mini-flows" class="mini"></div>
+        </section>
+        <section class="win">
+          <div class="win-h">
+            <span class="win-t"><span class="icon">bolt</span>마켓 속보 (Flash Wire)</span>
+            <div class="tabs" id="wire-tabs"><button type="button" data-v="news" class="on">뉴스</button><button type="button" data-v="filings">DART 공시</button></div>
+          </div>
+          <div id="market-news" class="wire"></div>
+          <div id="filings" class="wire" hidden></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───── 2. 종목 심층 ───── -->
+  <section id="view-stock" class="view" hidden>
+    <div class="stock-grid">
+      <div class="col">
+        <section class="win pad" id="quote"></section>
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">align_horizontal_center</span>호가창 (HOGA)</span><span class="win-tag accent" id="book-src">5단계</span></div>
+          <div id="book" class="book"></div>
+        </section>
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">analytics</span>주요 지표</span><span class="win-tag">FUND</span></div>
+          <dl id="infos" class="infos"></dl>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="win">
+          <div class="win-h tall">
+            <div class="tabs" id="range">
+              <button type="button" data-v="1D">1일</button>
+              <button type="button" data-v="1M">1개월</button>
+              <button type="button" data-v="3M" class="on">3개월</button>
+              <button type="button" data-v="1Y">1년</button>
+              <button type="button" data-v="3Y">3년</button>
+            </div>
+            <div id="legend" class="legend"></div>
+          </div>
+          <div id="readout" class="readout"></div>
+          <canvas id="chart" class="chart"></canvas>
+        </section>
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">table_chart</span>연간 재무 요약</span><span class="win-tag">매출·이익 억원 · (E) 추정</span></div>
+          <div class="table-wrap"><table id="fin" class="grid-table"><thead></thead><tbody></tbody></table></div>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="dot live"></span>실시간 체결 틱</span><span class="win-tag accent" id="ticks-src">TICK</span></div>
+          <div id="ticks" class="mini"></div>
+        </section>
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">swap_vert</span>투자자별 순매수 (주)</span><span class="win-tag">FLOW</span></div>
+          <div class="table-wrap">
+            <table id="flows" class="grid-table">
+              <thead><tr><th>일자</th><th>종가</th><th>외국인</th><th>기관</th><th>개인</th><th>외인보유</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="win">
+          <div class="win-h">
+            <span class="win-t"><span class="icon">bolt</span><span id="news-title">종목 뉴스</span></span>
+            <div class="tabs" id="news-tabs"><button type="button" data-v="news" class="on">뉴스</button><button type="button" data-v="disc">공시</button></div>
+          </div>
+          <div id="news" class="wire"></div>
+          <div id="disc" class="wire" hidden></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───── 3. 거시경제 ───── -->
+  <section id="view-macro" class="view" hidden>
+    <div class="macro-grid">
+      <div id="macro-groups" class="macro-groups"></div>
+      <div class="col macro-side">
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">show_chart</span><span id="macro-title">추이</span></span><span class="win-tag accent">최근 120영업일</span></div>
+          <div id="macro-readout" class="readout"></div>
+          <canvas id="macro-chart" class="chart small"></canvas>
+        </section>
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">public</span>해외 주요 지수</span><span class="win-tag">WORLD</span></div>
+          <div id="macro-world" class="mrows"></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───── 4. 포트폴리오 ───── -->
+  <section id="view-port" class="view" hidden>
+    <div id="port-sum" class="cards four"></div>
+    <div class="port-grid">
+      <section class="win">
+        <div class="win-h tall">
+          <span class="win-t"><span class="icon">account_balance_wallet</span>보유 종목 <span id="port-note" class="win-tag"></span></span>
+          <div class="tabs" id="port-mode"><button type="button" data-v="manual" class="on">직접 입력</button><button type="button" data-v="toss">토스증권 계좌</button></div>
+        </div>
+        <div class="table-wrap">
+          <table id="port" class="grid-table">
+            <thead><tr><th>코드</th><th>종목명</th><th>수량</th><th>평단가</th><th>현재가</th><th>등락률</th><th>평가금액</th><th>평가손익</th><th>수익률</th><th>비중</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+      <div class="col">
+        <section class="win" id="port-add">
+          <div class="win-h"><span class="win-t"><span class="icon">add_circle</span>종목 추가</span><span class="win-tag accent">ADD</span></div>
+          <form id="port-form" class="form" autocomplete="off">
+            <label for="pf-code">종목명 또는 코드</label>
+            <input id="pf-code" type="text" placeholder="예: 삼성전자, 005930" required>
+            <label for="pf-qty">수량 (주)</label>
+            <input id="pf-qty" type="number" min="1" step="1" placeholder="10" required>
+            <label for="pf-cost">평단가 (원) — 비우면 현재가</label>
+            <input id="pf-cost" type="number" min="0" step="any" placeholder="현재가">
+            <button type="submit" class="btn-accent">추가</button>
+            <p id="pf-msg" class="form-msg"></p>
+          </form>
+        </section>
+        <section class="win">
+          <div class="win-h"><span class="win-t"><span class="icon">pie_chart</span>비중</span><span class="win-tag">ALLOC</span></div>
+          <div id="port-alloc" class="mrows"></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <p class="note">데이터: 네이버페이 증권, Yahoo Finance (키 입력 시 DART, 토스증권, 한국투자증권) · 지연될 수 있으며 투자 권유가 아닙니다.</p>
+</main>
+
+<footer class="tape">
+  <div class="chip tape-label"><span class="accent b">TAPE</span><span class="dot live"></span></div>
+  <div id="tape" class="tape-items"></div>
+</footer>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<!-- ───── API 키 설정 ───── -->
+<div id="keys-modal" class="modal" hidden>
+  <form id="keys-form" class="modal-box" autocomplete="off">
+    <div class="win-h"><span class="win-t"><span class="icon">key</span>API 키 설정</span><button type="button" id="keys-close" class="x" aria-label="닫기">✕</button></div>
+    <div class="form">
+      <p class="hint">키는 이 PC의 설정 파일에만 저장되고, 해당 기관 서버 외에는 전송되지 않습니다. 비워 두면 기존 값을 유지합니다.</p>
+
+      <div class="key-h"><span>DART 전자공시</span><span id="ks-dart" class="badge"></span></div>
+      <p class="hint">공식 공시 목록(종목별·시장 전체). 발급: opendart.fss.or.kr → 인증키 신청 (무료)</p>
+      <label for="k-dart">인증키</label>
+      <input id="k-dart" type="password" spellcheck="false">
+
+      <div class="key-h"><span>토스증권 Open API</span><span id="ks-toss" class="badge"></span></div>
+      <p class="hint">호가, 체결 틱, 내 계좌 보유 종목 (조회 전용, 주문 없음). 발급: 토스증권 설정 &gt; Open API. 같은 메뉴의 허용 IP 관리에 이 PC의 IP를 등록해야 합니다.</p>
+      <label for="k-toss-id">CLIENT ID</label>
+      <input id="k-toss-id" type="password" spellcheck="false">
+      <label for="k-toss-secret">CLIENT SECRET</label>
+      <input id="k-toss-secret" type="password" spellcheck="false">
+
+      <div class="key-h"><span>한국투자증권 KIS Open API</span><span id="ks-kis" class="badge"></span></div>
+      <p class="hint">10단계 호가, 체결 틱·체결강도 (조회 전용). 발급: apiportal.koreainvestment.com</p>
+      <label for="k-kis-key">APP KEY</label>
+      <input id="k-kis-key" type="password" spellcheck="false">
+      <label for="k-kis-secret">APP SECRET</label>
+      <input id="k-kis-secret" type="password" spellcheck="false">
+      <label class="check"><input id="k-kis-paper" type="checkbox"> 모의투자 키</label>
+
+      <div class="form-row">
+        <button type="submit" class="btn-accent">저장 및 연결 확인</button>
+        <button type="button" id="keys-clear">키 모두 삭제</button>
+      </div>
+      <p id="keys-msg" class="form-msg"></p>
+      <p id="keys-file" class="hint"></p>
+    </div>
+  </form>
+</div>
+
+<script src="chart.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
