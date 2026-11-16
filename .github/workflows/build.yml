@@ -1,0 +1,51 @@
+# main에 푸시될 때마다 Windows에서 exe를 빌드하고, 실제로 실행해 본 뒤 릴리스로 올린다.
+name: build-exe
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+
+      - name: exe 실행 확인
+        shell: pwsh
+        run: |
+          $env:PORT = "3000"
+          $p = Start-Process -FilePath "dist\KRX-APEX.exe" -ArgumentList "--no-open" -PassThru
+          Start-Sleep -Seconds 5
+          try {
+            $page = Invoke-WebRequest -Uri "http://127.0.0.1:3000/" -UseBasicParsing
+            if ($page.Content -notmatch "KRX::APEX") { throw "화면 파일이 내장되지 않았습니다" }
+            $s = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/settings"
+            if ($null -eq $s.toss) { throw "설정 API 응답이 올바르지 않습니다" }
+            $q = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/quote?code=005930"
+            Write-Host "시세 응답: $($q.name) $($q.price)"
+            if (-not $q.name) { throw "시세 API 응답이 비어 있습니다" }
+          } finally {
+            Stop-Process -Id $p.Id -Force
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KRX-APEX
+          path: dist/KRX-APEX.exe
+
+      - name: 릴리스 올리기
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v1.0.${{ github.run_number }}"
+          gh release create $tag dist/KRX-APEX.exe --target ${{ github.sha }} --title "KRX::APEX $tag" --notes "Windows 실행 파일입니다. KRX-APEX.exe를 내려받아 더블클릭하면 터미널 창이 열립니다. API 키는 프로그램 안에서 F9로 입력합니다."

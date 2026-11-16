@@ -29,7 +29,9 @@ async function main() {
 
   console.log('3/4 Windows용 node.exe 준비');
   const nodeExe = path.join(BUILD, `node-${process.version}-win-x64.exe`);
-  if (!fs.existsSync(nodeExe)) {
+  if (process.platform === 'win32' && process.arch === 'x64') {
+    fs.copyFileSync(process.execPath, nodeExe); // Windows에서 빌드하면 지금 쓰는 node.exe를 그대로 쓴다
+  } else if (!fs.existsSync(nodeExe)) {
     const url = `https://nodejs.org/dist/${process.version}/win-x64/node.exe`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`node.exe 다운로드 실패 (${res.status}) ${url}`);
